@@ -1,9 +1,23 @@
 /* eslint-disable no-unused-vars */
 // Chuyển đổi qua lại giữa ArrayBuffer (Nhị phân) và Base64 (Chuỗi để lưu DB)
-export const buf2base64 = (buf) =>
-  window.btoa(String.fromCharCode(...new Uint8Array(buf)));
-export const base642buf = (b64) =>
-  Uint8Array.from(window.atob(b64), (c) => c.charCodeAt(0)).buffer;
+export const buf2base64 = (buf) => {
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return window.btoa(binary);
+};
+
+export const base642buf = (b64) => {
+  const binary_string = window.atob(b64);
+  const len = binary_string.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary_string.charCodeAt(i);
+  }
+  return bytes.buffer;
+};
 
 export const E2EE = {
   // ==========================================
@@ -34,12 +48,10 @@ export const E2EE = {
       ["encrypt"],
     );
   },
-  // Xuất Private Key ra chuỗi Base64 để lưu vào LocalStorage
   exportPrivateKey: async (privateKey) => {
     const exported = await window.crypto.subtle.exportKey("pkcs8", privateKey);
     return buf2base64(exported);
   },
-  // Chuyển chuỗi Base64 từ LocalStorage thành Private Key Object
   importPrivateKey: async (base64Key) => {
     return await window.crypto.subtle.importKey(
       "pkcs8",
@@ -49,6 +61,7 @@ export const E2EE = {
       ["decrypt"],
     );
   },
+
   // ==========================================
   // 2. SHA-256: HÀM BĂM KIỂM TRA TOÀN VẸN
   // ==========================================
@@ -59,35 +72,81 @@ export const E2EE = {
   },
 
   // ==========================================
-  // 3. QUY TRÌNH GỬI (MÃ HÓA = AES + RSA + SHA)
+  // 3. CHỮ KÝ SỐ (RSASSA-PKCS1-v1_5) - THÊM MỚI
+  // ==========================================
+  signMessage: async (plainText, myPrivateKeyBase64) => {
+    // Ép trình duyệt đọc Private Key dưới định dạng Ký số
+    const privKey = await window.crypto.subtle.importKey(
+      "pkcs8",
+      base642buf(myPrivateKeyBase64),
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      true,
+      ["sign"],
+    );
+    const encoded = new TextEncoder().encode(plainText);
+    const signatureBuffer = await window.crypto.subtle.sign(
+      "RSASSA-PKCS1-v1_5",
+      privKey,
+      encoded,
+    );
+    return buf2base64(signatureBuffer);
+  },
+
+  verifySignature: async (
+    plainText,
+    signatureBase64,
+    senderPublicKeyBase64,
+  ) => {
+    // Ép trình duyệt đọc Public Key dưới định dạng Xác thực ký số
+    const pubKey = await window.crypto.subtle.importKey(
+      "spki",
+      base642buf(senderPublicKeyBase64),
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      true,
+      ["verify"],
+    );
+    const encoded = new TextEncoder().encode(plainText);
+    return await window.crypto.subtle.verify(
+      "RSASSA-PKCS1-v1_5",
+      pubKey,
+      base642buf(signatureBase64),
+      encoded,
+    );
+  },
+
+  // ==========================================
+  // 4. QUY TRÌNH GỬI
   // ==========================================
   encryptMessage: async (
     plainText,
     receiverPublicKeyBase64,
     myPublicKeyBase64,
+    myPrivateKeyBase64,
   ) => {
-    //Tạo mã băm để kiểm tra tính toàn vẹn
-    const shaHash = await E2EE.hashSHA256(plainText);
+    //Ký số nội dung bằng Private Key của người gửi
+    const digitalSignature = await E2EE.signMessage(
+      plainText,
+      myPrivateKeyBase64,
+    );
 
-    //tạo chìa khoa session ngẫu nhiên (AES-256)
+    //Sinh khóa phiên AES
     const aesKey = await window.crypto.subtle.generateKey(
       { name: "AES-GCM", length: 256 },
       true,
       ["encrypt", "decrypt"],
     );
 
+    //Mã hóa nội dung tin nhắn bằng khóa phiên AES
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
     const encodedText = new TextEncoder().encode(plainText);
-
-    //Mã hóa nội dung lại thành cypher text bằng khóa AES
     const cipherBuffer = await window.crypto.subtle.encrypt(
       { name: "AES-GCM", iv: iv },
       aesKey,
       encodedText,
     );
-    const rawAesKey = await window.crypto.subtle.exportKey("raw", aesKey);
 
-    //Mã hóa khóa AES cho người nhận (sử dụng publickey của người nhận để mã hóa)
+    //Lấy khóa public người nhận để mã hóa khóa phiên
+    const rawAesKey = await window.crypto.subtle.exportKey("raw", aesKey);
     const receiverPubKey = await E2EE.importPublicKey(receiverPublicKeyBase64);
     const encryptedAesBuffer = await window.crypto.subtle.encrypt(
       { name: "RSA-OAEP" },
@@ -95,12 +154,7 @@ export const E2EE = {
       rawAesKey,
     );
 
-    /*
-    Vì thuật toán RSA sử dụng private key của người nhận để giải mã tin nhắn nên người gửi sẽ không thể đọc lại tin nhắn 
-    nên cta sử dụng cả public key của mình để mã hóa nó để có thể đọc lại tin nhắn => mô hình đa ổ khóa
-     */
-
-    //Mã hóa khóa AES cho chính mình (để xem lại)
+    //Lấy chính public key của người gửi để mã hóa khóa phiên
     let senderEncryptedAesBuffer = null;
     if (myPublicKeyBase64) {
       const myPubKey = await E2EE.importPublicKey(myPublicKeyBase64);
@@ -111,31 +165,38 @@ export const E2EE = {
       );
     }
 
+    //Đóng gói và gửi cho người nhận
     return {
-      text: buf2base64(cipherBuffer),
-      encryptedAesKey: buf2base64(encryptedAesBuffer),
-      senderEncryptedAesKey: senderEncryptedAesBuffer
+      text: buf2base64(cipherBuffer), //Tin nhắn đã mã hóa
+      encryptedAesKey: buf2base64(encryptedAesBuffer), //Khóa phiên đã mã hóa
+      senderEncryptedAesKey: senderEncryptedAesBuffer //Khóa phiên được mã hóa bằng chính public key của mình
         ? buf2base64(senderEncryptedAesBuffer)
         : "",
       iv: buf2base64(iv),
-      shaHash: shaHash,
+      shaHash: digitalSignature, // Cất Chữ ký số vào trường shaHash
     };
   },
 
   // ==========================================
-  // 4. QUY TRÌNH NHẬN (GIẢI MÃ & KIỂM TRA SHA)
+  // 5. QUY TRÌNH NHẬN
   // ==========================================
-  decryptMessage: async (encryptedPayload, myPrivateKey) => {
+  decryptMessage: async (
+    encryptedPayload,
+    myPrivateKey,
+    senderPublicKeyBase64,
+  ) => {
     try {
-      if (!encryptedPayload.encryptedAesKey) return encryptedPayload.text; // Bỏ qua nếu là tin nhắn cũ (chưa mã hóa)
+      if (!encryptedPayload.encryptedAesKey) return encryptedPayload.text;
 
-      //Dùng chính private key của mình để giải mã khóa AES
+      //Giải mã khóa AES bằng khóa private của người nhận
       const decryptedAesRaw = await window.crypto.subtle.decrypt(
+        //Khóa AES còn là dạng byte (thô)
         { name: "RSA-OAEP" },
         myPrivateKey,
         base642buf(encryptedPayload.encryptedAesKey),
       );
       const aesKey = await window.crypto.subtle.importKey(
+        //Đúc lại thành khóa AES hoàn chỉnh
         "raw",
         decryptedAesRaw,
         { name: "AES-GCM" },
@@ -143,7 +204,7 @@ export const E2EE = {
         ["encrypt", "decrypt"],
       );
 
-      //Dùng khóa AES vừa giải được để giải mã nội dung
+      //Dùng khóa AES vừa giải mã được để giải mã phần nội dung tin nhắn
       const decryptedBuffer = await window.crypto.subtle.decrypt(
         { name: "AES-GCM", iv: base642buf(encryptedPayload.iv) },
         aesKey,
@@ -151,10 +212,20 @@ export const E2EE = {
       );
       const plainText = new TextDecoder().decode(decryptedBuffer);
 
-      //Băm SHA-256 lại nội dung vừa giải mã và so sánh (kiểm tra tính toàn vẹn)
-      const verifyHash = await E2EE.hashSHA256(plainText);
-      if (verifyHash !== encryptedPayload.shaHash) {
-        return "⚠️ [CẢNH BÁO: Tin nhắn đã bị thay đổi trên đường truyền!]";
+      //Xác thực Chữ ký số bằng Public Key của người gửi
+      if (senderPublicKeyBase64 && encryptedPayload.shaHash) {
+        try {
+          const isValidSignature = await E2EE.verifySignature(
+            plainText,
+            encryptedPayload.shaHash,
+            senderPublicKeyBase64,
+          );
+          if (!isValidSignature) {
+            return "[CẢNH BÁO: CHỮ KÝ SỐ KHÔNG HỢP LỆ! Tin nhắn giả mạo.]";
+          }
+        } catch (e) {
+          return "[Lỗi định dạng Chữ ký số - Có thể do khóa bị cũ]";
+        }
       }
 
       return plainText;

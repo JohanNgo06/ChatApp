@@ -4,7 +4,6 @@ import ChatPage from './pages/ChatPage.jsx';
 import SignUpPage from './pages/SignUpPage.jsx';
 import SignInPage from './pages/SignInPage.jsx';
 import { useAuthStore } from './store/useAuthStore.js';
-import PageLoader from './components/PageLoader.jsx'; 
 
 function App() {
   return (
@@ -12,6 +11,8 @@ function App() {
       <Routes>
         <Route path="/signin" element={<SignInPage />} />
         <Route path="/signup" element={<SignUpPage />} />
+        <Route path="/chatpage" element={<ChatPage />} />
+        
         {/* Các route khác... */}
       </Routes>
     </div>

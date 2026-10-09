@@ -1,305 +1,249 @@
-import { useState, useEffect, useRef } from 'react';
-import { Search, Send, Image as ImageIcon, Smile, LogOut, MessageSquare, Loader, X } from 'lucide-react';
-import { useAuthStore } from '../store/useAuthStore';
-import { useChatStore } from '../store/useChatStore'; 
+import React from 'react';
+import { 
+  Edit, LogOut, Home, Search, MoreVertical, 
+  Paperclip, Image as ImageIcon, Send, CheckCheck, MoreHorizontal 
+} from 'lucide-react';
+import { useAuthStore } from '../store/useAuthStore'; // Import store để gọi hàm đăng xuất
 
-
-function ChatPage() {
-  const { signout, authUser } = useAuthStore();
-  const { 
-    messages, 
-    contacts, 
-    getContacts, 
-    getMessages, 
-    selectedUser, 
-    setSelectedUser, 
-    sendMessage,
-    isMessagesLoading,
-    subscribeToMessages,
-    unsubscribeFromMessages
-  } = useChatStore();
-
-  const [imagePreview, setImagePreview] = useState(null);
-  const fileInputRef = useRef(null);
-
-  const [messageInput, setMessageInput] = useState('');
-  const [searchQuery, setSearchQuery] = useState('');
-  const messagesEndRef = useRef(null);
-  useEffect(() => {
-      // Nếu chưa chọn ai để chat thì không làm gì cả
-      if (!selectedUser) return;
-
-      // Bật công tắc lắng nghe tin nhắn của người này
-      subscribeToMessages();
-
-      // Cleanup function: Khi đổi sang người khác hoặc unmount, tắt lắng nghe người cũ
-      return () => {
-        unsubscribeFromMessages();
-      };
-  }, [selectedUser, subscribeToMessages, unsubscribeFromMessages]);
-  useEffect(() => {
-    getContacts();
-  }, [getContacts]);
-
-  useEffect(() => {
-    if (selectedUser) {
-      getMessages(selectedUser._id);
-    }
-  }, [selectedUser, getMessages]);
-
-  useEffect(() => {
-    if (messagesEndRef.current && messages) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [messages]);
-
-  const filteredContacts = contacts.filter(contact => 
-    contact.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    (contact.email && contact.email.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
-
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    // Kiểm tra dung lượng (giới hạn 5MB cho nhẹ)
-    if (file.size > 5 * 1024 * 1024) {
-      alert("Ảnh quá lớn! Vui lòng chọn ảnh dưới 5MB.");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => {
-      setImagePreview(reader.result); // Lưu chuỗi Base64 vào state
-    };
-  };
-
-  const handleSendMessage = (e) => {
-    e.preventDefault();
-    if (!messageInput.trim() && !imagePreview) return; // Nếu không có chữ VÀ không có ảnh thì chặn
-
-    sendMessage({
-      receiverId: selectedUser._id,
-      text: messageInput.trim(),
-      image: imagePreview // Gửi chuỗi Base64 của ảnh đi
-    });
-    
-    // Reset lại form sau khi gửi
-    setMessageInput('');
-    setImagePreview(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
+const ChatPage = () => {
+  // Lấy hàm logout từ store
+  const { logout } = useAuthStore();
 
   return (
-    <div className="w-full max-w-6xl h-[90vh] flex bg-slate-800/40 backdrop-blur-xl border border-slate-700/50 rounded-3xl shadow-2xl overflow-hidden">
+    <div className="h-screen w-full flex bg-[#f0f2f5] font-sans overflow-hidden">
       
-  
-      <div className="w-80 flex flex-col border-r border-slate-700/50 bg-slate-900/20">
+      {/* ================= CỘT TRÁI: DANH SÁCH CHAT ================= */}
+      <div className="w-[360px] lg:w-[400px] flex flex-col bg-white border-r border-gray-100 shrink-0 z-10 shadow-sm">
         
-
-        <div className="p-4 flex items-center justify-between border-b border-slate-700/50">
-          <div className="flex items-center gap-2">
-            <div className="p-2 bg-gradient-to-br from-pink-500 to-cyan-500 rounded-xl shadow-lg">
-              <MessageSquare className="size-5 text-white" />
+        {/* --- Header Danh sách Chat --- */}
+        <div className="p-5 pb-3">
+          <div className="flex justify-between items-center mb-5">
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-bold text-gray-900">Đoạn chat</h2>
+              <span className="bg-indigo-50 text-[#5c40e8] text-xs font-bold px-2 py-0.5 rounded-full">12</span>
             </div>
-            <span className="font-bold text-lg text-transparent bg-clip-text bg-gradient-to-r from-pink-400 to-cyan-400">
-              ChatApp
-            </span>
-          </div>
-          <button 
-            onClick={signout} 
-            className="p-2 text-slate-400 hover:text-pink-500 hover:bg-slate-800/50 rounded-xl transition-all"
-            title="Đăng xuất"
-          >
-            <LogOut className="size-5" />
-          </button>
-        </div>
-
-   
-        <div className="p-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-slate-400" />
-            <input 
-              type="text" 
-              placeholder="Tìm kiếm liên hệ..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2.5 bg-slate-900/50 border border-slate-700/50 rounded-xl text-sm focus:outline-none focus:border-cyan-500 text-white placeholder-slate-500 transition-colors shadow-inner" 
-            />
-          </div>
-        </div>
-
-
-        <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-1 custom-scrollbar">
-          {filteredContacts.length === 0 ? (
-            <div className="text-center text-slate-500 text-sm mt-4">Không tìm thấy ai</div>
-          ) : (
-            filteredContacts.map((contact) => (
-              <div 
-                key={contact._id} 
-                onClick={() => setSelectedUser(contact)}
-                className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all duration-200 ${
-                  selectedUser?._id === contact._id 
-                    ? 'bg-slate-700/60 border border-slate-600/50 shadow-md' 
-                    : 'hover:bg-slate-800/40 border border-transparent'
-                }`}
+            
+            {/* Nhóm nút hành động: Home, Edit, LogOut */}
+            <div className="flex items-center gap-1.5">
+              <button 
+                className="p-2 bg-gray-50 text-gray-600 hover:bg-indigo-50 hover:text-[#5c40e8] rounded-full transition-colors"
+                title="Trang chủ"
               >
-                <div className="relative">
-                  <div className="size-12 rounded-full bg-gradient-to-r from-cyan-600 to-blue-600 flex items-center justify-center text-white font-bold text-lg shadow-inner">
-                    {contact.name.charAt(0).toUpperCase()}
-                  </div>
-                  <span className="absolute bottom-0 right-0 size-3.5 bg-green-500 border-2 border-slate-900 rounded-full"></span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-semibold text-slate-200 truncate">{contact.name}</h3>
-                  <p className="text-xs text-slate-400 truncate">{contact.email}</p>
-                </div>
+                <Home className="w-4 h-4" />
+              </button>
+              <button 
+                className="p-2 bg-gray-50 text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+                title="Tạo tin nhắn mới"
+              >
+                <Edit className="w-4 h-4" />
+              </button>
+              <button 
+                onClick={logout}
+                className="p-2 bg-red-50 text-red-500 hover:bg-red-100 rounded-full transition-colors"
+                title="Đăng xuất"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* --- Tabs Lọc --- */}
+          <div className="flex items-center gap-2 mb-4 overflow-x-auto no-scrollbar pb-1">
+            <button className="bg-[#5c40e8] text-white text-xs font-semibold px-4 py-1.5 rounded-full shrink-0 shadow-md shadow-indigo-200">
+              Tất cả
+            </button>
+            <button className="bg-[#f4f5f7] text-gray-600 hover:bg-gray-200 text-xs font-semibold px-4 py-1.5 rounded-full flex items-center gap-1.5 shrink-0 transition-colors">
+              Chưa đọc <span className="bg-[#5c40e8] text-white text-[10px] px-1.5 rounded-full">3</span>
+            </button>
+            <button className="bg-[#f4f5f7] text-gray-600 hover:bg-gray-200 text-xs font-semibold px-4 py-1.5 rounded-full shrink-0 transition-colors">Nhóm 4</button>
+            <button className="bg-[#f4f5f7] text-gray-600 hover:bg-gray-200 text-xs font-semibold px-4 py-1.5 rounded-full shrink-0 transition-colors">Ghim (2)</button>
+          </div>
+
+          {/* --- Ô Tìm kiếm --- */}
+          <div className="relative">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+              <Search className="h-4 w-4 text-gray-400" />
+            </div>
+            <input
+              type="text"
+              className="block w-full pl-9 pr-10 py-2.5 bg-[#f4f5f7] rounded-xl text-sm placeholder-gray-500 outline-none focus:ring-2 focus:ring-[#5c40e8]/20 focus:bg-white transition-all"
+              placeholder="Lọc hội thoại, tệp tin..."
+            />
+            <button className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600">
+              <MoreHorizontal className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* --- Danh sách Chat (Scrollable) --- */}
+        <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-0.5">
+          
+          {/* Chat Item: ĐANG CHỌN (Active) */}
+          <div className="flex items-center gap-3 p-3 bg-[#f8f9fa] rounded-xl cursor-pointer relative group">
+            {/* Thanh bar đánh dấu Active */}
+            <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-[#5c40e8] rounded-r-md"></div>
+            
+            <div className="relative ml-2">
+              <img src="https://i.pravatar.cc/150?img=47" className="w-12 h-12 rounded-full object-cover border-2 border-white shadow-sm" alt="avatar" />
+              <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white rounded-full"></div>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex justify-between items-baseline mb-0.5">
+                <h4 className="text-sm font-bold text-gray-900 truncate">Khánh Linh</h4>
+                <span className="text-xs text-[#5c40e8] font-bold">14:32</span>
               </div>
-            ))
-          )}
+              <p className="text-[13px] text-[#5c40e8] font-medium truncate italic">
+                <span className="inline-block w-1.5 h-1.5 bg-[#5c40e8] rounded-full mr-1.5 mb-0.5 animate-pulse"></span>
+                Đang soạn tin nhắn...
+              </p>
+            </div>
+          </div>
+
+          {/* Chat Item 2 */}
+          <div className="flex items-center gap-3 p-3 hover:bg-[#f4f5f7] rounded-xl cursor-pointer transition-colors ml-2">
+            <div className="relative">
+              <img src="https://i.pravatar.cc/150?img=11" className="w-12 h-12 rounded-full object-cover border-2 border-transparent" alt="avatar" />
+              <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white rounded-full"></div>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex justify-between items-baseline mb-0.5">
+                <h4 className="text-sm font-bold text-gray-900 truncate">Minh Quân</h4>
+                <span className="text-[11px] text-gray-400 font-medium">5m trước</span>
+              </div>
+              <p className="text-[13px] text-gray-500 truncate flex items-center gap-1">
+                <span className="text-[#5c40e8] font-bold">@</span> PulseChat_Design_v2.fig
+              </p>
+            </div>
+          </div>
+
+          {/* Chat Item 3 (Nhóm) */}
+          <div className="flex items-center gap-3 p-3 hover:bg-[#f4f5f7] rounded-xl cursor-pointer transition-colors ml-2">
+            <div className="relative">
+              <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center text-[#5c40e8] font-bold">PS</div>
+              <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-gray-300 border-2 border-white rounded-full"></div>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex justify-between items-baseline mb-0.5">
+                <h4 className="text-sm font-bold text-gray-900 truncate">Product Studio</h4>
+                <span className="text-[11px] text-gray-400 font-medium">11:15</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <p className="text-[13px] text-gray-500 truncate pr-2">
+                  <span className="text-gray-800 font-semibold">Tuấn:</span> Đã cập nhật roadmap Q3...
+                </p>
+                <div className="bg-[#5c40e8] text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full shrink-0">2</div>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
 
-
-      <div className="flex-1 flex flex-col relative bg-slate-900/10">
-        {!selectedUser ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
-            <div className="p-6 bg-slate-800/30 rounded-full mb-4 shadow-inner">
-              <MessageSquare className="size-16 opacity-50 text-cyan-500" />
+      {/* ================= CỘT PHẢI: KHUNG CHAT ACTIVE ================= */}
+      {/* ================= CỘT PHẢI: KHUNG CHAT ACTIVE ================= */}
+      <div className="flex-1 flex flex-col bg-[#f0f2f5] relative">
+        
+        {/* --- Chat Header --- */}
+        <div className="h-[76px] bg-white border-b border-gray-100 flex items-center justify-between px-6 shrink-0 z-10 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="relative cursor-pointer">
+              <img src="https://i.pravatar.cc/150?img=47" className="w-10 h-10 rounded-full object-cover" alt="avatar" />
+              <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
             </div>
-            <p className="text-lg font-medium text-slate-300">Chào mừng đến với ChatApp</p>
-            <p className="text-sm">Chọn một cuộc hội thoại bên trái để bắt đầu</p>
+            <div>
+              <h3 className="text-base font-bold text-gray-900 leading-tight">Khánh Linh</h3>
+              <p className="text-xs text-green-600 font-medium flex items-center gap-1 mt-0.5">
+                <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
+                Đang hoạt động
+              </p>
+            </div>
           </div>
-        ) : (
+        </div>
+
+        {/* --- Khung Tin Nhắn (Scrollable) --- */}
+        <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
           
-          <>
-            
-            <div className="px-6 py-4 border-b border-slate-700/50 bg-slate-800/40 backdrop-blur-md flex items-center justify-between z-10">
-              <div className="flex items-center gap-3">
-                <div className="size-10 rounded-full bg-gradient-to-r from-cyan-600 to-blue-600 flex items-center justify-center text-white font-bold shadow-md">
-                  {selectedUser.name.charAt(0).toUpperCase()}
-                </div>
-                <div>
-                  <h2 className="font-semibold text-white">{selectedUser.name}</h2>
-                  <p className="text-xs text-cyan-400 flex items-center gap-1">
-                    <span className="size-1.5 rounded-full bg-green-500 block"></span>
-                    Đang hoạt động
-                  </p>
-                </div>
+          <div className="flex justify-center my-2">
+            <span className="bg-gray-200/60 text-gray-600 text-xs font-semibold px-3 py-1 rounded-full">
+              Hôm nay, 14:30
+            </span>
+          </div>
+
+          {/* Tin nhắn ĐẾN (Trái) - Đã giới hạn max-w-[60%] */}
+          <div className="flex items-start gap-3 max-w-[60%]">
+            <img src="https://i.pravatar.cc/150?img=47" className="w-8 h-8 rounded-full object-cover mt-1" alt="avatar" />
+            <div className="flex flex-col gap-1 w-full">
+              <div className="flex items-baseline gap-2 ml-1">
+                <span className="text-xs font-bold text-gray-700">Khánh Linh</span>
+                <span className="text-[10px] text-gray-400">14:30</span>
+              </div>
+              <div className="bg-white p-4 rounded-2xl rounded-tl-sm shadow-sm border border-gray-100">
+                <p className="text-[14px] text-gray-800 leading-relaxed break-words">
+                  Chào bạn! Mình đã hoàn thiện prototype cho luồng nhắn tin và chia sẻ tài liệu mới rồi nhé! Bạn xem qua bản thiết kế xem có cần tinh chỉnh gì không ✨
+                </p>
               </div>
             </div>
+          </div>
 
-            
-            <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar flex flex-col">
-              {isMessagesLoading ? (
-                <div className="flex-1 flex justify-center items-center">
-                  <Loader className="size-8 animate-spin text-cyan-500" />
-                </div>
-              ) : messages.length === 0 ? (
-                <div className="flex-1 flex justify-center items-center text-slate-500 text-sm">
-                  Hãy gửi lời chào đầu tiên tới {selectedUser.name}!
-                </div>
-              ) : (
-                messages.map((msg, idx) => {
-                  const isMe = msg.senderId === authUser._id;
-                  return (
-                    // THÊM LẠI THẺ DIV NÀY ĐỂ CĂN LỀ TRÁI/PHẢI VÀ ÔM VỪA NỘI DUNG:
-                    <div key={msg._id || idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                      
-                      {/* Thẻ bong bóng chat của bạn đưa vào bên trong */}
-                      <div className={`max-w-[70%] rounded-2xl px-5 py-3 shadow-lg ${
-                        isMe 
-                          ? 'bg-gradient-to-br from-cyan-600 to-pink-600 text-white rounded-tr-sm' 
-                          : 'bg-slate-700/80 border border-slate-600/50 text-slate-200 rounded-tl-sm backdrop-blur-sm'
-                      }`}>
-                        {/* NẾU CÓ ẢNH, HIỂN THỊ ẢNH TRƯỚC */}
-                        {msg.image && (
-                          <img 
-                            src={msg.image} 
-                            alt="attachment" 
-                            className="max-w-[200px] sm:max-w-[250px] rounded-lg mb-2 object-cover"
-                          />
-                        )}
-                        {/* NẾU CÓ CHỮ, HIỂN THỊ CHỮ */}
-                        {msg.text && <p className="leading-relaxed break-words">{msg.text}</p>}
-                      </div>
-                      
-                    </div>
-                  );
-                })
-              )}
-              
-              <div ref={messagesEndRef} />
-            </div>
-
-            
-            {/* KHU VỰC NHẬP TIN NHẮN */}
-              <div className="bg-slate-800/40 border-t border-slate-700/50 relative backdrop-blur-md z-10 flex flex-col">
-                
-                {/* KHUNG PREVIEW ẢNH (Hiển thị khi bạn vừa chọn ảnh xong) */}
-                {imagePreview && (
-                  <div className="p-4 flex items-center gap-4 border-b border-slate-700/50">
-                    <div className="relative">
-                      <img src={imagePreview} alt="Preview" className="h-20 w-20 object-cover rounded-lg border border-slate-600" />
-                      <button
-                        onClick={() => {
-                          setImagePreview(null);
-                          if (fileInputRef.current) fileInputRef.current.value = "";
-                        }}
-                        className="absolute -top-2 -right-2 bg-slate-800 text-slate-300 rounded-full p-1 border border-slate-600 hover:text-red-400"
-                      >
-                        <X className="size-4" />
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                <form onSubmit={handleSendMessage} className="p-4 flex items-center gap-3">
-                  {/* NÚT CHỌN ẢNH (Kích hoạt input file ẩn) */}
-                  <button 
-                    type="button" 
-                    onClick={() => fileInputRef.current?.click()}
-                    className={`p-2 transition-colors ${imagePreview ? "text-cyan-400" : "text-slate-400 hover:text-cyan-400"}`}
-                  >
-                    <ImageIcon className="size-5" />
-                  </button>
-                  
-                  {/* INPUT FILE ẨN */}
-                  <input 
-                    type="file" 
-                    accept="image/*" 
-                    className="hidden" 
-                    ref={fileInputRef} 
-                    onChange={handleImageChange} 
-                  />
-
-                  <div className="flex-1 relative">
-                    <input 
-                      type="text" 
-                      placeholder="Nhập tin nhắn..." 
-                      value={messageInput}
-                      onChange={(e) => setMessageInput(e.target.value)}
-                      className="w-full pl-4 pr-10 py-3 bg-slate-900/60 border border-slate-600/50 rounded-full text-white placeholder-slate-400 focus:outline-none focus:border-pink-500 focus:bg-slate-800 transition-all shadow-inner"
-                    />
-                    <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-pink-400 transition-colors">
-                      <Smile className="size-5" />
-                    </button>
-                  </div>
-                  <button 
-                    type="submit" 
-                    disabled={!messageInput.trim() && !imagePreview}
-                    className="p-3 bg-gradient-to-r from-cyan-500 to-pink-500 rounded-full text-white hover:scale-105 active:scale-95 transition-transform shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
-                  >
-                    <Send className="size-5 ml-0.5" />
-                  </button>
-                </form>
+          {/* Tin nhắn ĐI (Phải) - Đã giới hạn max-w-[60%] */}
+          <div className="flex items-start justify-end gap-3 max-w-[60%] self-end">
+            <div className="flex flex-col gap-1 w-full items-end">
+              <div className="flex items-baseline gap-2 mr-1">
+                <span className="text-[10px] text-gray-400">14:31</span>
+                <span className="text-xs font-bold text-gray-700">Bạn</span>
               </div>
-          </>
-        )}
+              <div className="bg-[#5c40e8] p-4 rounded-2xl rounded-tr-sm shadow-md">
+                <p className="text-[14px] text-white leading-relaxed break-words">
+                  Tuyệt quá Linh ơi! Giao diện mới nhìn rất mượt, màu sắc Vibrant Connection rất nổi bật. Để mình kiểm tra file Figma và audio recap của bạn nhé! 👍
+                </p>
+              </div>
+              <div className="flex items-center gap-1 mt-0.5">
+                <span className="text-[10px] text-gray-400 font-medium">Đã xem 14:32</span>
+                <CheckCheck className="w-3.5 h-3.5 text-blue-500" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* --- Vùng Nhập Tin Nhắn & Typing Indicator (Bottom Cố định) --- */}
+        <div className="px-6 pb-6 pt-2 bg-[#f0f2f5] shrink-0 flex flex-col">
+          
+          {/* Typing Indicator đã được di chuyển xuống đây (Sát trên thanh Input) */}
+          <div className="flex items-center gap-2 text-gray-500 ml-2 mb-3">
+            <div className="flex gap-1">
+              <span className="w-1.5 h-1.5 bg-[#5c40e8] rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+              <span className="w-1.5 h-1.5 bg-[#5c40e8] rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+              <span className="w-1.5 h-1.5 bg-[#5c40e8] rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+            </div>
+            <span className="text-xs font-medium italic">Khánh Linh đang nhập tin nhắn...</span>
+          </div>
+
+          {/* Thanh Input */}
+          <div className="bg-white rounded-2xl flex items-center p-2 shadow-sm border border-gray-100 min-h-[60px]">
+            <div className="flex items-center gap-1 px-2">
+              <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
+                <Paperclip className="w-5 h-5" />
+              </button>
+              <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-full transition-colors">
+                <ImageIcon className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <input 
+              type="text" 
+              className="flex-1 bg-transparent border-none focus:ring-0 outline-none px-2 text-[15px] text-gray-800 placeholder-gray-400"
+              placeholder="Nhấn Enter để gửi"
+            />
+            
+            <button className="bg-[#5c40e8] hover:bg-[#4a32c3] text-white p-3 rounded-full transition-transform active:scale-95 shadow-md shadow-indigo-200 mr-1">
+              <Send className="w-4 h-4 ml-0.5" />
+            </button>
+          </div>
+        </div>
+
       </div>
     </div>
   );
-}
+};
 
 export default ChatPage;

@@ -170,3 +170,35 @@ export const checkAuth = (req, res) => {
     res.status(500).json({ message: "Internal Server Error" });
   }
 };
+
+export const searchUsers = async (req, res) => {
+  try {
+    // Lấy từ khóa tìm kiếm từ query param (vd: /search?keyword=abc)
+    const keyword = req.query.keyword;
+
+    // Nếu không nhập gì, có thể trả về mảng rỗng
+    if (!keyword) {
+      return res.status(200).json([]);
+    }
+
+    // Lấy ID của user đang đăng nhập hiện tại từ middleware
+    const currentUserId = req.user._id;
+
+    // Tìm kiếm các user khớp với name hoặc email (không phân biệt chữ hoa chữ thường)
+    // VÀ phải LOẠI TRỪ user đang đăng nhập ra khỏi kết quả
+    const users = await User.find({
+      _id: { $ne: currentUserId }, // $ne: Not Equal (Loại trừ ID của chính mình)
+      $or: [
+        { name: { $regex: keyword, $options: "i" } }, // $regex để tìm kiếm tương đối (LIKE), $options: "i" là không phân biệt hoa thường
+        { email: { $regex: keyword, $options: "i" } },
+      ],
+    }).select("-password -privateKey"); // BẢO MẬT: Bỏ chọn trường password và privateKey không gửi về Frontend
+
+    res.status(200).json(users);
+  } catch (error) {
+    console.error("Lỗi tại controller searchUsers:", error.message);
+    res
+      .status(500)
+      .json({ message: "Lỗi server nội bộ", error: error.message });
+  }
+};

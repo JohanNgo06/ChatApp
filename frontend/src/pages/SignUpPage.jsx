@@ -9,7 +9,7 @@ import { useAuthStore } from '../store/useAuthStore'; // Import store của bạ
 const SignUpPage = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({ 
-    fullName: '', 
+    name: '', 
     email: '', 
     password: '', 
     confirmPassword: '' 
@@ -33,7 +33,7 @@ const SignUpPage = () => {
 
     // Gọi hàm đăng ký từ backend
     await signup({
-      fullName: formData.fullName,
+      name: formData.name,
       email: formData.email,
       password: formData.password,
     });
@@ -80,8 +80,8 @@ const SignUpPage = () => {
                 type="text"
                 className="block w-full pl-12 pr-4 py-3.5 bg-[#f8f9fa] border border-transparent rounded-2xl text-gray-900 placeholder-gray-400 focus:border-[#5c40e8] focus:bg-white focus:ring-4 focus:ring-indigo-50 transition-all outline-none"
                 placeholder="Nguyễn Văn A"
-                value={formData.fullName}
-                onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 required
               />
             </div>

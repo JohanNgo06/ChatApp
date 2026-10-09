@@ -10,13 +10,13 @@ const SignInPage = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({ email: '', password: '' });
 
-  // Lấy hàm login và trạng thái isLoggingIn từ Zustand store
-  const { login, isLoggingIn } = useAuthStore();
+  // Lấy hàm login và trạng thái isSigningIn từ Zustand store
+  const { signin, isSigningIn } = useAuthStore();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     // Gọi hàm đăng nhập từ backend
-    await login(formData);
+    await signin(formData);
   };
 
   return (
@@ -47,7 +47,7 @@ const SignInPage = () => {
                 <input
                   type="email"
                   className="block w-full pl-12 pr-4 py-3.5 bg-[#f8f9fa] border border-transparent rounded-2xl text-gray-900 placeholder-gray-400 focus:border-[#5c40e8] focus:bg-white focus:ring-4 focus:ring-indigo-50 transition-all outline-none"
-                  placeholder="name@pulsechat.io"
+                  placeholder="name@WhatSoup.io"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   required
@@ -91,11 +91,11 @@ const SignInPage = () => {
 
             <button
               type="submit"
-              disabled={isLoggingIn}
+              disabled={isSigningIn}
               className="w-full bg-[#5c40e8] hover:bg-[#4a32c3] disabled:bg-[#a696eb] disabled:cursor-not-allowed active:scale-[0.98] text-white font-semibold py-4 rounded-2xl transition-all flex items-center justify-center gap-2 mt-2 shadow-lg shadow-indigo-200"
             >
               {/* Hiển thị vòng xoay nếu đang gọi API */}
-              {isLoggingIn ? (
+              {isSigningIn ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
                   Đang xử lý...
@@ -171,7 +171,7 @@ const SignInPage = () => {
                       <div className="w-5 h-5 font-bold flex items-center justify-center text-sm">F</div>
                     </div>
                     <div>
-                      <p className="text-[13px] font-bold text-gray-800">PulseChat_Design_v2.fig</p>
+                      <p className="text-[13px] font-bold text-gray-800">WhatSoup_Design_v2.fig</p>
                       <p className="text-[11px] text-gray-400 font-medium mt-0.5">24.8 MB • Đã tải lên</p>
                     </div>
                   </div>
@@ -193,7 +193,7 @@ const SignInPage = () => {
                   <div className="flex items-center gap-3">
                     <div className="bg-blue-50 p-2.5 rounded-xl w-10 h-10"></div>
                     <div>
-                      <p className="text-[13px] font-bold text-gray-800">PulseChat_Assets_v2.zip</p>
+                      <p className="text-[13px] font-bold text-gray-800">WhatSoup_Assets_v2.zip</p>
                       <p className="text-[11px] text-gray-400 font-medium mt-0.5">18.2 MB • Đã tải lên</p>
                     </div>
                   </div>

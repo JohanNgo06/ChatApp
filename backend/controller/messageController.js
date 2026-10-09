@@ -3,16 +3,19 @@ import Conversation from "../model/conversationModel.js";
 import User from "../model/userModel.js";
 import { io, getReceiverSocketId } from "../lib/socket.js";
 
-export const getUsersForSidebar = async (req, res, next) => {
+export const getUsersForSidebar = async (req, res) => {
   try {
     const loggedInUserId = req.user._id;
+
+    // Lấy danh sách tất cả user TRỪ người đang đăng nhập
     const filteredUsers = await User.find({
       _id: { $ne: loggedInUserId },
-    }).select("-password");
+    }).select("-password -privateKey");
 
     res.status(200).json(filteredUsers);
   } catch (error) {
-    next(error);
+    console.error("Lỗi tại getUsersForSidebar: ", error.message);
+    res.status(500).json({ error: "Lỗi server nội bộ" });
   }
 };
 

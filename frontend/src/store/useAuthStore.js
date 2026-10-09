@@ -6,7 +6,10 @@ import { E2EE } from "../lib/E2EE.js";
 const BASE_URL =
   import.meta.env.MODE === "development" ? "http://localhost:5000" : "/";
 
+const keyName = (userId) => `chat-private-key-${userId}`;
+
 export const useAuthStore = create((set, get) => ({
+  onlineUsers: [],
   authUser: null,
   isCheckingAuth: true,
   isSigningUp: false,
@@ -30,6 +33,7 @@ export const useAuthStore = create((set, get) => ({
       reconnectionDelay: 2000, // Mỗi lần thử cách nhau 2 giây
     });
 
+    socket.on("getOnlineUsers", (ids) => set({ onlineUsers: ids }));
     socket.connect();
     set({ socket });
   },
@@ -37,7 +41,7 @@ export const useAuthStore = create((set, get) => ({
   disconnectSocket: () => {
     if (get().socket?.connected) {
       get().socket.disconnect();
-      set({ socket: null });
+      set({ socket: null, onlineUsers: [] });
     }
   },
 
@@ -45,7 +49,7 @@ export const useAuthStore = create((set, get) => ({
     try {
       const res = await axiosInstance.get("/auth/check");
       set({ authUser: res.data });
-      const storedKey = localStorage.getItem("chat-private-key");
+      const storedKey = localStorage.getItem(keyName(res.data._id));
       if (storedKey) {
         const privKey = await E2EE.importPrivateKey(storedKey);
         set({ myPrivateKey: privKey });
@@ -67,23 +71,33 @@ export const useAuthStore = create((set, get) => ({
       const pubKeyBase64 = await E2EE.exportPublicKey(keyPair.publicKey);
       const privKeyBase64 = await E2EE.exportPrivateKey(keyPair.privateKey);
 
-      // [E2EE] 2. Lưu Private Key an toàn ở LocalStorage (Không bao giờ gửi lên Server)
-      localStorage.setItem("chat-private-key", privKeyBase64);
-      set({ myPrivateKey: keyPair.privateKey });
-
-      // [E2EE] 3. Gắn Public Key vào data để gửi lên Server
+      // [E2EE] 2. Gắn Public Key vào data để tạo payload gửi lên Server
       const payload = { ...data, publicKey: pubKeyBase64 };
 
+      // 3. Gọi API Đăng ký
       const res = await axiosInstance.post("/auth/signup", payload);
-      localStorage.setItem("chat-token", res.data.data.token);
-      set({ authUser: res.data.data.user });
 
+      // 4. Lấy dữ liệu trả về từ server
+      const user = res.data.data.user;
+      const token = res.data.data.token;
+
+      // 5. Lưu thông tin vào LocalStorage
+      localStorage.setItem("chat-token", token); // Lưu token để giữ đăng nhập
+      localStorage.setItem(keyName(user._id), privKeyBase64); // Lưu khóa bí mật E2EE
+
+      // 6. Cập nhật trạng thái (State) của ứng dụng
+      set({ authUser: user, myPrivateKey: keyPair.privateKey });
+
+      // 7. Kết nối Socket
       get().connectSocket();
+
+      console.log("Đăng ký thành công!");
     } catch (error) {
       console.log(
         "Lỗi đăng ký:",
         error.response?.data?.message || error.message,
       );
+      // Nếu bạn có dùng thư viện toast, bạn có thể thêm: toast.error(error.response?.data?.message) ở đây
     } finally {
       set({ isSigningUp: false });
     }
@@ -95,7 +109,7 @@ export const useAuthStore = create((set, get) => ({
       const res = await axiosInstance.post("/auth/signin", data);
       localStorage.setItem("chat-token", res.data.data.token);
       set({ authUser: res.data.data.user });
-      const storedKey = localStorage.getItem("chat-private-key");
+      const storedKey = localStorage.getItem(keyName(res.data.data.user._id));
       if (storedKey) {
         const privKey = await E2EE.importPrivateKey(storedKey);
         set({ myPrivateKey: privKey });
@@ -117,8 +131,6 @@ export const useAuthStore = create((set, get) => ({
       // Vẫn gọi API signout để Backend xóa Cookie (nếu bạn có dùng)
       await axiosInstance.post("/auth/signout");
       localStorage.removeItem("chat-token");
-      // [QUAN TRỌNG] Xóa Private Key khi đăng xuất để bảo mật
-      localStorage.removeItem("chat-private-key");
       set({ authUser: null, myPrivateKey: null });
       get().disconnectSocket();
       console.log("Đăng xuất thành công!");

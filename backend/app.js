@@ -7,6 +7,7 @@ import errorMiddleware from "./middleware/errorMiddleware.js";
 import path from "path";
 import authRoute from "./routes/authRoute.js";
 import messageRoute from "./routes/messageRoute.js";
+import friendRoute from "./routes/friendRoute.js";
 import { connectToDB } from "./lib/db.js";
 import conversationRoute from "./routes/conversationRoute.js";
 import cors from "cors";
@@ -18,6 +19,7 @@ app.use(cors({ origin: ENV.CLIENT_URL, credentials: true }));
 app.use("/api/auth", authRoute);
 app.use("/api/messages", messageRoute);
 app.use("/api/conversation", conversationRoute);
+app.use("/api/friends", friendRoute);
 
 app.use(errorMiddleware);
 const ___dirname = path.resolve();

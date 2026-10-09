@@ -6,30 +6,42 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: ["http://localhost:5173"], // Link Frontend của bạn
+    origin: ["http://localhost:5173"], // Domain frontend của bạn
+    methods: ["GET", "POST"],
   },
 });
 
-// Object dùng để lưu trữ: Biến User ID thành Socket ID
+// Biến lưu trữ ID của các user đang online: { userId: socketId }
 const userSocketMap = {};
 
-export const getReceiverSocketId = (receiverId) => {
-  return userSocketMap[receiverId];
+// HÀM QUAN TRỌNG: Lấy socketId của một user dựa vào userId của họ
+const getReceiverSocketId = (userId) => {
+  return userSocketMap[userId];
 };
 
 io.on("connection", (socket) => {
   console.log("Một người dùng đã kết nối:", socket.id);
 
+  // Lấy userId từ frontend gửi lên (trong hàm connectSocket của bạn)
   const userId = socket.handshake.query.userId;
+
   if (userId && userId !== "undefined") {
-    userSocketMap[userId] = socket.id; // Lưu lại ID thiết bị của user này
+    userSocketMap[userId] = socket.id;
   }
 
-  // Lắng nghe sự kiện ngắt kết nối
+  // PHÁT TÍN HIỆU REAL-TIME: Báo cho TẤT CẢ client biết danh sách online mới nhất
+  io.emit("getOnlineUsers", Object.keys(userSocketMap));
+
+  // Khi người dùng đóng tab, mất mạng hoặc đăng xuất (Disconnect)
   socket.on("disconnect", () => {
-    console.log("Người dùng ngắt kết nối:", socket.id);
-    delete userSocketMap[userId];
+    console.log("Người dùng đã ngắt kết nối:", socket.id);
+    if (userId) {
+      delete userSocketMap[userId]; // Xóa khỏi danh sách online
+    }
+    // PHÁT TÍN HIỆU LẠI: Báo cho mọi người là có người vừa offline
+    io.emit("getOnlineUsers", Object.keys(userSocketMap));
   });
 });
 
-export { app, io, server };
+// Xuất thêm getReceiverSocketId ra ngoài cùng app, io, server
+export { app, io, server, getReceiverSocketId };

@@ -17,13 +17,15 @@ const parseDecryptedPayload = (decryptedString, originalImage) => {
 };
 
 export const useChatStore = create((set, get) => ({
+  sendError: null,
   messages: [],
   contacts: [],
   selectedUser: null,
   isMessagesLoading: false,
   isContactsLoading: false,
 
-  setSelectedUser: (selectedUser) => set({ selectedUser }),
+  setSelectedUser: (selectedUser) =>
+    set({ selectedUser, messages: [], sendError: null }),
 
   getContacts: async () => {
     set({ isContactsLoading: true });
@@ -74,7 +76,7 @@ export const useChatStore = create((set, get) => ({
             msg.encryptedAesKey &&
             !msg.senderEncryptedAesKey
           ) {
-            plainText = "🔒 [Tin nhắn cũ không thể giải mã]";
+            plainText = "[Tin nhắn cũ không thể giải mã]";
           } else if (!isMe && msg.encryptedAesKey && myPrivateKey) {
             const decryptedString = await E2EE.decryptMessage(
               msg,
@@ -89,7 +91,7 @@ export const useChatStore = create((set, get) => ({
           return { ...msg, text: plainText, image: finalImage };
         }),
       );
-
+      if (get().selectedUser?._id !== userId) return;
       set({ messages: decryptedMessages });
     } catch (error) {
       console.log("Lỗi lấy tin nhắn:", error);
@@ -98,32 +100,36 @@ export const useChatStore = create((set, get) => ({
     }
   },
 
-  sendMessage: async (messageData) => {
+  sendMessage: async ({ text, image, receiverId }) => {
+    const { selectedUser } = get();
+    if (!selectedUser) return false;
+    set({ sendError: null });
     try {
-      const { messages, selectedUser } = get();
-      let payloadToSend = { text: messageData.text, image: messageData.image };
+      let payloadToSend = { text, image };
 
       if (selectedUser.publicKey) {
         const { authUser, myPrivateKey } = useAuthStore.getState();
+        if (!myPrivateKey) {
+          set({
+            sendError:
+              "Trình duyệt này không có khóa riêng của bạn nên không thể mã hóa tin nhắn.",
+          });
+          return false;
+        }
 
         const combinedPayload = JSON.stringify({
-          text: messageData.text || "",
-          image: messageData.image || "",
+          text: text || "",
+          image: image || "",
         });
-
         const myPrivateKeyBase64 = await E2EE.exportPrivateKey(myPrivateKey);
 
-        // 1. ĐO THỜI GIAN MÃ HÓA BẮT ĐẦU
         const startEncryptTime = performance.now();
-
         const encryptedData = await E2EE.encryptMessage(
           combinedPayload,
           selectedUser.publicKey,
           authUser.publicKey,
           myPrivateKeyBase64,
         );
-
-        // KẾT THÚC ĐO THỜI GIAN
         const endEncryptTime = performance.now();
 
         payloadToSend = { ...encryptedData, image: "" };
@@ -149,18 +155,19 @@ export const useChatStore = create((set, get) => ({
         console.log("========================================");
       }
       const res = await axiosInstance.post(
-        `/messages/send/${messageData.receiverId}`,
+        `/messages/send/${receiverId}`,
         payloadToSend,
       );
 
-      const newMessageForMe = {
-        ...res.data,
-        text: messageData.text,
-        image: messageData.image,
-      };
-      set({ messages: [...messages, newMessageForMe] });
+      if (get().selectedUser?._id === receiverId) {
+        set({ messages: [...get().messages, { ...res.data, text, image }] });
+      }
+      return true;
     } catch (error) {
-      console.log("Lỗi gửi tin nhắn:", error);
+      set({
+        sendError: error.response?.data?.message || "Gửi tin nhắn thất bại",
+      });
+      return false;
     }
   },
 

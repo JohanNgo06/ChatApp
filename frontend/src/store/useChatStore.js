@@ -106,25 +106,48 @@ export const useChatStore = create((set, get) => ({
       if (selectedUser.publicKey) {
         const { authUser, myPrivateKey } = useAuthStore.getState();
 
-        // Đóng gói ảnh và chữ
         const combinedPayload = JSON.stringify({
           text: messageData.text || "",
           image: messageData.image || "",
         });
 
-        // Xuất Private Key đang lưu ra dạng Base64 để đem đi ký số
         const myPrivateKeyBase64 = await E2EE.exportPrivateKey(myPrivateKey);
+
+        // 1. ĐO THỜI GIAN MÃ HÓA BẮT ĐẦU
+        const startEncryptTime = performance.now();
 
         const encryptedData = await E2EE.encryptMessage(
           combinedPayload,
           selectedUser.publicKey,
           authUser.publicKey,
-          myPrivateKeyBase64, // <-- Bơm khóa vào đây để ký
+          myPrivateKeyBase64,
         );
 
-        payloadToSend = { ...encryptedData, image: "" };
-      }
+        // KẾT THÚC ĐO THỜI GIAN
+        const endEncryptTime = performance.now();
 
+        payloadToSend = { ...encryptedData, image: "" };
+
+        // 2. ĐO KÍCH THƯỚC DỮ LIỆU (TÍNH BẰNG KILOBYTE)
+        const originalSize = new Blob([combinedPayload]).size;
+        const encryptedSize = new Blob([JSON.stringify(payloadToSend)]).size;
+
+        // IN KẾT QUẢ RA CONSOLE (F12)
+        console.log("========================================");
+        console.log(
+          `[THỜI GIAN] Mã hóa & Ký số: ${(endEncryptTime - startEncryptTime).toFixed(2)} ms`,
+        );
+        console.log(
+          `[KÍCH THƯỚC] Bản rõ gốc: ${(originalSize / 1024).toFixed(2)} KB`,
+        );
+        console.log(
+          `[KÍCH THƯỚC] Bản mã gửi đi: ${(encryptedSize / 1024).toFixed(2)} KB`,
+        );
+        console.log(
+          `[ĐÁNH GIÁ] Tỷ lệ phình to dữ liệu: ${((encryptedSize / originalSize) * 100).toFixed(2)}%`,
+        );
+        console.log("========================================");
+      }
       const res = await axiosInstance.post(
         `/messages/send/${messageData.receiverId}`,
         payloadToSend,
@@ -158,10 +181,19 @@ export const useChatStore = create((set, get) => ({
         let finalImage = newMessage.image;
 
         if (newMessage.encryptedAesKey && myPrivateKey) {
+          // BẮT ĐẦU ĐO THỜI GIAN GIẢI MÃ
+          const startDecryptTime = performance.now();
+
           const decryptedString = await E2EE.decryptMessage(
             newMessage,
             myPrivateKey,
             senderPubKey,
+          );
+
+          // KẾT THÚC ĐO THỜI GIAN
+          const endDecryptTime = performance.now();
+          console.log(
+            `⏱️ [THỜI GIAN] Giải mã & Xác thực chữ ký: ${(endDecryptTime - startDecryptTime).toFixed(2)} ms`,
           );
 
           const parsed = parseDecryptedPayload(

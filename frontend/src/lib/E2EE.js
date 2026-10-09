@@ -72,7 +72,7 @@ export const E2EE = {
   },
 
   // ==========================================
-  // 3. CHỮ KÝ SỐ (RSASSA-PKCS1-v1_5) - THÊM MỚI
+  // 3. CHỮ KÝ SỐ (RSASSA-PKCS1-v1_5)
   // ==========================================
   signMessage: async (plainText, myPrivateKeyBase64) => {
     // Ép trình duyệt đọc Private Key dưới định dạng Ký số

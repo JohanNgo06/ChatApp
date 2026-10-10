@@ -1,8 +1,7 @@
 import { create } from "zustand";
 import { axiosInstance } from "../lib/axios.js";
 import { useAuthStore } from "./useAuthStore.js";
-import { E2EE, buf2base64 } from "../lib/E2EE.js"; // Import thêm buf2base64
-import { E2EE, buf2base64 } from "../lib/E2EE.js"; // Import thêm buf2base64
+import { E2EE, buf2base64 } from "../lib/E2EE.js";
 
 // Hàm tách JSON sau khi giải mã
 const parseDecryptedPayload = (decryptedString, originalImage) => {
@@ -12,7 +11,7 @@ const parseDecryptedPayload = (decryptedString, originalImage) => {
       return { text: parsed.text, image: parsed.image };
     }
   } catch (error) {
-    console.error(error.messages);
+    console.error(error);
   }
   return { text: decryptedString, image: originalImage };
 };
@@ -24,7 +23,6 @@ export const useChatStore = create((set, get) => ({
   selectedUser: null,
   isMessagesLoading: false,
   isContactsLoading: false,
-  isTyping: false,
   isTyping: false,
 
   setSelectedUser: (selectedUser) =>
@@ -51,12 +49,6 @@ export const useChatStore = create((set, get) => ({
 
       const decryptedMessages = await Promise.all(
         rawMessages.map(async (msg) => {
-          // BỎ QUA GIẢI MÃ NẾU ĐÂY LÀ TIN NHẮN FILE (Sẽ giải mã khi user bấm Tải xuống)
-          if (msg.fileUrl) {
-            return msg;
-          }
-
-          // BỎ QUA GIẢI MÃ NẾU ĐÂY LÀ TIN NHẮN FILE (Sẽ giải mã khi user bấm Tải xuống)
           if (msg.fileUrl) {
             return msg;
           }
@@ -112,24 +104,11 @@ export const useChatStore = create((set, get) => ({
   },
 
   sendMessage: async ({ text, image, file, receiverId }) => {
-  sendMessage: async ({ text, image, file, receiverId }) => {
     const { selectedUser } = get();
     if (!selectedUser) return false;
     set({ sendError: null });
 
-
     try {
-      let success = true;
-      const { authUser, myPrivateKey } = useAuthStore.getState();
-
-      if (!myPrivateKey && selectedUser.publicKey) {
-        set({
-          sendError:
-            "Trình duyệt này không có khóa riêng của bạn nên không thể mã hóa tin nhắn.",
-        });
-        return false;
-      }
-      let success = true;
       const { authUser, myPrivateKey } = useAuthStore.getState();
 
       if (!myPrivateKey && selectedUser.publicKey) {
@@ -140,13 +119,10 @@ export const useChatStore = create((set, get) => ({
         return false;
       }
 
-      // ==========================================
-      // 1. NẾU CÓ FILE -> MÃ HÓA VÀ GỬI THÀNH 1 TIN NHẮN RIÊNG
-      // ==========================================
+      // 1. Gửi file nếu có
       if (file && selectedUser.publicKey) {
         const myPrivateKeyBase64 = await E2EE.exportPrivateKey(myPrivateKey);
 
-        console.log(`[FILE] Bắt đầu mã hóa file: ${file.name}`);
         const encryptedFile = await E2EE.encryptFile(
           file.buffer,
           selectedUser.publicKey,
@@ -174,55 +150,7 @@ export const useChatStore = create((set, get) => ({
         }
       }
 
-      // ==========================================
-      // 2. NẾU CÓ TEXT / IMAGE -> GỬI THÊM 1 TIN NHẮN
-      // ==========================================
-      if (text || image) {
-        let payloadToSend = { text, image };
-
-        if (selectedUser.publicKey) {
-          const combinedPayload = JSON.stringify({
-            text: text || "",
-            image: image || "",
-          });
-          const myPrivateKeyBase64 = await E2EE.exportPrivateKey(myPrivateKey);
-      // ==========================================
-      // 1. NẾU CÓ FILE -> MÃ HÓA VÀ GỬI THÀNH 1 TIN NHẮN RIÊNG
-      // ==========================================
-      if (file && selectedUser.publicKey) {
-        const myPrivateKeyBase64 = await E2EE.exportPrivateKey(myPrivateKey);
-
-        console.log(`[FILE] Bắt đầu mã hóa file: ${file.name}`);
-        const encryptedFile = await E2EE.encryptFile(
-          file.buffer,
-          selectedUser.publicKey,
-          authUser.publicKey,
-          myPrivateKeyBase64,
-        );
-
-        const payloadToSend = {
-          fileBase64: encryptedFile.fileBase64,
-          fileName: file.name,
-          fileType: file.type,
-          fileSize: file.size,
-          encryptedAesKey: encryptedFile.encryptedAesKey,
-          senderEncryptedAesKey: encryptedFile.senderEncryptedAesKey,
-          iv: encryptedFile.iv,
-          shaHash: encryptedFile.shaHash,
-        };
-
-        const res = await axiosInstance.post(
-          `/messages/send/${receiverId}`,
-          payloadToSend,
-        );
-        if (get().selectedUser?._id === receiverId) {
-          set({ messages: [...get().messages, res.data] });
-        }
-      }
-
-      // ==========================================
-      // 2. NẾU CÓ TEXT / IMAGE -> GỬI THÊM 1 TIN NHẮN
-      // ==========================================
+      // 2. Gửi Text / Image nếu có
       if (text || image) {
         let payloadToSend = { text, image };
 
@@ -233,12 +161,6 @@ export const useChatStore = create((set, get) => ({
           });
           const myPrivateKeyBase64 = await E2EE.exportPrivateKey(myPrivateKey);
 
-          const encryptedData = await E2EE.encryptMessage(
-            combinedPayload,
-            selectedUser.publicKey,
-            authUser.publicKey,
-            myPrivateKeyBase64,
-          );
           const encryptedData = await E2EE.encryptMessage(
             combinedPayload,
             selectedUser.publicKey,
@@ -256,21 +178,9 @@ export const useChatStore = create((set, get) => ({
         if (get().selectedUser?._id === receiverId) {
           set({ messages: [...get().messages, { ...res.data, text, image }] });
         }
-          payloadToSend = { ...encryptedData, image: "" };
-        }
-
-        const res = await axiosInstance.post(
-          `/messages/send/${receiverId}`,
-          payloadToSend,
-        );
-        if (get().selectedUser?._id === receiverId) {
-          set({ messages: [...get().messages, { ...res.data, text, image }] });
-        }
       }
 
-      return success;
-
-      return success;
+      return true;
     } catch (error) {
       set({
         sendError: error.response?.data?.message || "Gửi tin nhắn thất bại",
@@ -279,9 +189,6 @@ export const useChatStore = create((set, get) => ({
     }
   },
 
-  // ==========================================
-  // HÀM TẢI VÀ GIẢI MÃ FILE KHI USER BẤM NÚT
-  // ==========================================
   downloadFile: async (msg) => {
     try {
       const { authUser, myPrivateKey } = useAuthStore.getState();
@@ -290,11 +197,9 @@ export const useChatStore = create((set, get) => ({
       const isMe = msg.senderId === authUser._id;
       const senderPubKey = isMe ? authUser.publicKey : selectedUser.publicKey;
 
-      // 1. Tải file đã mã hóa từ Cloudinary dưới dạng nhị phân (Buffer)
       const response = await fetch(msg.fileUrl);
       const buffer = await response.arrayBuffer();
 
-      // 2. Chuyển thành Base64 để đưa vào hàm giải mã
       const fileBase64 = buf2base64(buffer);
       const encryptedPayload = {
         fileBase64: fileBase64,
@@ -303,7 +208,6 @@ export const useChatStore = create((set, get) => ({
         shaHash: msg.shaHash,
       };
 
-      // 3. Giải mã bằng khóa Private
       const decryptedBuffer = await E2EE.decryptFile(
         encryptedPayload,
         myPrivateKey,
@@ -314,53 +218,6 @@ export const useChatStore = create((set, get) => ({
         throw new Error("Lỗi giải mã hoặc Chữ ký số không hợp lệ.");
       }
 
-      // 4. Tạo URL để trình duyệt tự động tải xuống
-      const blob = new Blob([decryptedBuffer], {
-        type: msg.fileType || "application/octet-stream",
-      });
-      return URL.createObjectURL(blob);
-    } catch (error) {
-      console.error("Lỗi tải/giải mã file:", error);
-      return null;
-    }
-  },
-
-  // ==========================================
-  // HÀM TẢI VÀ GIẢI MÃ FILE KHI USER BẤM NÚT
-  // ==========================================
-  downloadFile: async (msg) => {
-    try {
-      const { authUser, myPrivateKey } = useAuthStore.getState();
-      const { selectedUser } = get();
-
-      const isMe = msg.senderId === authUser._id;
-      const senderPubKey = isMe ? authUser.publicKey : selectedUser.publicKey;
-
-      // 1. Tải file đã mã hóa từ Cloudinary dưới dạng nhị phân (Buffer)
-      const response = await fetch(msg.fileUrl);
-      const buffer = await response.arrayBuffer();
-
-      // 2. Chuyển thành Base64 để đưa vào hàm giải mã
-      const fileBase64 = buf2base64(buffer);
-      const encryptedPayload = {
-        fileBase64: fileBase64,
-        encryptedAesKey: isMe ? msg.senderEncryptedAesKey : msg.encryptedAesKey,
-        iv: msg.iv,
-        shaHash: msg.shaHash,
-      };
-
-      // 3. Giải mã bằng khóa Private
-      const decryptedBuffer = await E2EE.decryptFile(
-        encryptedPayload,
-        myPrivateKey,
-        senderPubKey,
-      );
-
-      if (!decryptedBuffer) {
-        throw new Error("Lỗi giải mã hoặc Chữ ký số không hợp lệ.");
-      }
-
-      // 4. Tạo URL để trình duyệt tự động tải xuống
       const blob = new Blob([decryptedBuffer], {
         type: msg.fileType || "application/octet-stream",
       });
@@ -378,12 +235,11 @@ export const useChatStore = create((set, get) => ({
     if (!socket) return;
 
     socket.on("newMessage", async (newMessage) => {
-      set({ isTyping: false }); // Tắt typing
+      set({ isTyping: false });
 
       if (newMessage.senderId === selectedUser._id) {
         if (newMessage.fileUrl) {
           set({ messages: [...get().messages, newMessage] });
-          // Báo cho server tin nhắn File đã được đọc
           socket.emit("markMessageAsRead", {
             messageId: newMessage._id,
             senderId: newMessage.senderId,
@@ -416,8 +272,6 @@ export const useChatStore = create((set, get) => ({
           image: finalImage,
         };
         set({ messages: [...get().messages, decryptedMessage] });
-
-        // THÊM: Báo cho server tin nhắn Text/Ảnh đã được đọc ngay lập tức vì đang mở đoạn chat
         socket.emit("markMessageAsRead", {
           messageId: newMessage._id,
           senderId: newMessage.senderId,
@@ -425,19 +279,15 @@ export const useChatStore = create((set, get) => ({
       }
     });
 
-    // Lắng nghe người kia đang gõ phím
     socket.on("userTyping", ({ senderId }) => {
       if (get().selectedUser?._id === senderId) set({ isTyping: true });
     });
+
     socket.on("userStoppedTyping", ({ senderId }) => {
       if (get().selectedUser?._id === senderId) set({ isTyping: false });
     });
 
-    // ==========================================
-    // THÊM LẮNG NGHE SỰ KIỆN "ĐÃ XEM"
-    // ==========================================
     socket.on("messageRead", ({ messageId }) => {
-      // Cập nhật 1 tin nhắn
       set({
         messages: get().messages.map((msg) =>
           msg._id === messageId ? { ...msg, isRead: true } : msg,
@@ -446,7 +296,6 @@ export const useChatStore = create((set, get) => ({
     });
 
     socket.on("messagesReadBulk", () => {
-      // Cập nhật TOÀN BỘ tin nhắn của mình thành Đã xem (khi người kia mở khung chat)
       set({
         messages: get().messages.map((msg) => ({ ...msg, isRead: true })),
       });
@@ -459,8 +308,8 @@ export const useChatStore = create((set, get) => ({
       socket.off("newMessage");
       socket.off("userTyping");
       socket.off("userStoppedTyping");
-      socket.off("messageRead"); // NHỚ TẮT
-      socket.off("messagesReadBulk"); // NHỚ TẮT
+      socket.off("messageRead");
+      socket.off("messagesReadBulk");
     }
   },
 }));

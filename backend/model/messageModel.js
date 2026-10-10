@@ -15,6 +15,7 @@ const messageSchema = new mongoose.Schema(
     text: {
       type: String,
       // ĐÃ BỎ `required: true` vì tin nhắn có thể chỉ chứa File/Ảnh
+      // ĐÃ BỎ `required: true` vì tin nhắn có thể chỉ chứa File/Ảnh
     },
     encryptedAesKey: {
       type: String,
@@ -30,25 +31,6 @@ const messageSchema = new mongoose.Schema(
     },
     image: {
       type: String,
-    },
-    // ==========================================
-    // CÁC TRƯỜNG MỚI ĐỂ LƯU FILE MÃ HÓA
-    // ==========================================
-    fileUrl: {
-      type: String, // Link tải file thô (đã mã hóa) từ Cloudinary
-    },
-    fileName: {
-      type: String, // Tên file gốc (ví dụ: bao-cao.pdf) để hiển thị UI
-    },
-    fileType: {
-      type: String, // Đuôi file (pdf, docx, zip...) để chọn Icon UI
-    },
-    fileSize: {
-      type: Number, // Dung lượng file (byte)
-    },
-    isRead: {
-      type: Boolean,
-      default: false,
     },
   },
   { timestamps: true },

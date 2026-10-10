@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  LogOut, Home, Search, Image as ImageIcon, Send, X, Loader2, MessageSquare, Lock, Paperclip, FileText, Download
+  LogOut, Home, Search, Image as ImageIcon, Send, X, Loader2, MessageSquare, Lock, Paperclip, FileText, Download, Check, CheckCheck
 } from 'lucide-react';
 import { useAuthStore } from '../store/useAuthStore';
 import { useChatStore } from '../store/useChatStore';
@@ -303,7 +303,18 @@ const ChatPage = () => {
                         )}
                       </div>
                       
-                      <span className="text-[10px] text-gray-400 mx-1">{formatTime(msg.createdAt)}</span>
+                      <div className={`flex items-center gap-1 mt-1 mx-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
+                        <span className="text-[10px] text-gray-400">{formatTime(msg.createdAt)}</span>
+                        
+                        {/* Chỉ hiện Tick xanh/xám cho tin nhắn của MÌNH gửi đi */}
+                        {isMe && (
+                          msg.isRead ? (
+                            <CheckCheck className="w-[14px] h-[14px] text-blue-500" title="Đã xem" />
+                          ) : (
+                            <Check className="w-[14px] h-[14px] text-gray-400" title="Đã gửi" />
+                          )
+                        )}
+                      </div>
                     </div>
                   </div>
                 );

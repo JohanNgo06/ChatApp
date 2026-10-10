@@ -1,6 +1,7 @@
 import { Server } from "socket.io";
 import http from "http";
 import express from "express";
+import Message from "../model/messageModel.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -41,6 +42,19 @@ io.on("connection", (socket) => {
     const receiverSocketId = getReceiverSocketId(receiverId);
     if (receiverSocketId) {
       io.to(receiverSocketId).emit("userStoppedTyping", { senderId: userId });
+    }
+  });
+
+  socket.on("markMessageAsRead", async ({ messageId, senderId }) => {
+    try {
+      await Message.findByIdAndUpdate(messageId, { isRead: true });
+      const senderSocketId = getReceiverSocketId(senderId);
+      if (senderSocketId) {
+        // Báo ngược lại cho người gửi biết tin nhắn này đã được đọc
+        io.to(senderSocketId).emit("messageRead", { messageId });
+      }
+    } catch (error) {
+      console.log("Lỗi đánh dấu đã đọc real-time:", error);
     }
   });
 

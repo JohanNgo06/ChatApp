@@ -249,10 +249,16 @@ export const useChatStore = create((set, get) => ({
     if (!socket) return;
 
     socket.on("newMessage", async (newMessage) => {
+      set({ isTyping: false }); // Tắt typing
+
       if (newMessage.senderId === selectedUser._id) {
-        // NẾU LÀ TIN NHẮN FILE -> KHÔNG GIẢI MÃ LIỀN, HIỆN LÊN UI LUÔN
         if (newMessage.fileUrl) {
           set({ messages: [...get().messages, newMessage] });
+          // Báo cho server tin nhắn File đã được đọc
+          socket.emit("markMessageAsRead", {
+            messageId: newMessage._id,
+            senderId: newMessage.senderId,
+          });
           return;
         }
 
@@ -281,21 +287,40 @@ export const useChatStore = create((set, get) => ({
           image: finalImage,
         };
         set({ messages: [...get().messages, decryptedMessage] });
-        set({ isTyping: false });
+
+        // THÊM: Báo cho server tin nhắn Text/Ảnh đã được đọc ngay lập tức vì đang mở đoạn chat
+        socket.emit("markMessageAsRead", {
+          messageId: newMessage._id,
+          senderId: newMessage.senderId,
+        });
       }
     });
 
+    // Lắng nghe người kia đang gõ phím
     socket.on("userTyping", ({ senderId }) => {
-      // Chỉ hiện Typing nếu người đang gõ chính là người mình đang mở đoạn chat
-      if (get().selectedUser?._id === senderId) {
-        set({ isTyping: true });
-      }
+      if (get().selectedUser?._id === senderId) set({ isTyping: true });
+    });
+    socket.on("userStoppedTyping", ({ senderId }) => {
+      if (get().selectedUser?._id === senderId) set({ isTyping: false });
     });
 
-    socket.on("userStoppedTyping", ({ senderId }) => {
-      if (get().selectedUser?._id === senderId) {
-        set({ isTyping: false });
-      }
+    // ==========================================
+    // THÊM LẮNG NGHE SỰ KIỆN "ĐÃ XEM"
+    // ==========================================
+    socket.on("messageRead", ({ messageId }) => {
+      // Cập nhật 1 tin nhắn
+      set({
+        messages: get().messages.map((msg) =>
+          msg._id === messageId ? { ...msg, isRead: true } : msg,
+        ),
+      });
+    });
+
+    socket.on("messagesReadBulk", () => {
+      // Cập nhật TOÀN BỘ tin nhắn của mình thành Đã xem (khi người kia mở khung chat)
+      set({
+        messages: get().messages.map((msg) => ({ ...msg, isRead: true })),
+      });
     });
   },
 
@@ -303,8 +328,10 @@ export const useChatStore = create((set, get) => ({
     const socket = useAuthStore.getState().socket;
     if (socket) {
       socket.off("newMessage");
-      socket.off("userTyping"); // NHỚ TẮT LẮNG NGHE
-      socket.off("userStoppedTyping"); // NHỚ TẮT LẮNG NGHE
+      socket.off("userTyping");
+      socket.off("userStoppedTyping");
+      socket.off("messageRead"); // NHỚ TẮT
+      socket.off("messagesReadBulk"); // NHỚ TẮT
     }
   },
 }));

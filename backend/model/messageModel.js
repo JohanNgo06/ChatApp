@@ -46,6 +46,10 @@ const messageSchema = new mongoose.Schema(
     fileSize: {
       type: Number, // Dung lượng file (byte)
     },
+    isRead: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true },
 );

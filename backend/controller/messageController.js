@@ -36,6 +36,25 @@ export const getMessages = async (req, res, next) => {
       conversationId: conversation._id,
     }).sort({ createdAt: 1 });
 
+    const unreadMessages = messages.filter(
+      (m) => m.senderId.toString() === partnerId.toString() && !m.isRead,
+    );
+
+    if (unreadMessages.length > 0) {
+      // Cập nhật DB
+      await Message.updateMany(
+        { _id: { $in: unreadMessages.map((m) => m._id) } },
+        { $set: { isRead: true } },
+      );
+      // Bắn Socket cho người gửi biết TẤT CẢ tin nhắn đã được xem
+      const partnerSocketId = getReceiverSocketId(partnerId);
+      if (partnerSocketId) {
+        io.to(partnerSocketId).emit("messagesReadBulk", {
+          conversationId: conversation._id,
+        });
+      }
+    }
+
     res.status(200).json(messages);
   } catch (error) {
     next(error);

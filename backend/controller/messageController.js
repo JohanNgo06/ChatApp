@@ -2,12 +2,12 @@ import Message from "../model/messageModel.js";
 import Conversation from "../model/conversationModel.js";
 import User from "../model/userModel.js";
 import { io, getReceiverSocketId } from "../lib/socket.js";
+import cloudinary from "../lib/cloudinary.js"; // THÊM IMPORT CLOUDINARY
 
 export const getUsersForSidebar = async (req, res) => {
   try {
     const loggedInUserId = req.user._id;
 
-    // Lấy danh sách tất cả user TRỪ người đang đăng nhập
     const filteredUsers = await User.find({
       _id: { $ne: loggedInUserId },
     }).select("-password -privateKey");
@@ -46,8 +46,20 @@ export const sendMessage = async (req, res, next) => {
   try {
     const currentUserId = req.user._id;
     const partnerId = req.params.partnerId;
-    const { text, image, encryptedAesKey, senderEncryptedAesKey, iv, shaHash } =
-      req.body;
+
+    // Nhận thêm các trường liên quan đến File từ Frontend gửi lên
+    const {
+      text,
+      image,
+      encryptedAesKey,
+      senderEncryptedAesKey,
+      iv,
+      shaHash,
+      fileBase64,
+      fileName,
+      fileType,
+      fileSize,
+    } = req.body;
 
     let conversation = await Conversation.findOne({
       participants: { $all: [currentUserId, partnerId] },
@@ -58,25 +70,57 @@ export const sendMessage = async (req, res, next) => {
         participants: [currentUserId, partnerId],
       });
     }
+
+    // ==========================================
+    // 1. XỬ LÝ UPLOAD FILE MÃ HÓA LÊN CLOUDINARY
+    // ==========================================
+    let uploadedFileUrl = "";
+    if (fileBase64) {
+      // Cloudinary yêu cầu định dạng data URI cho file upload
+      const fileDataUri = fileBase64.startsWith("data:")
+        ? fileBase64
+        : `data:application/octet-stream;base64,${fileBase64}`;
+
+      const uploadResponse = await cloudinary.uploader.upload(fileDataUri, {
+        resource_type: "raw", // Bắt buộc dùng 'raw' vì Cloudinary không đọc được file đã bị AES mã hóa
+        folder: "chat_files",
+      });
+      uploadedFileUrl = uploadResponse.secure_url;
+    }
+
+    // ==========================================
+    // 2. LƯU VÀO DATABASE
+    // ==========================================
     const newMessage = await Message.create({
       senderId: currentUserId,
       conversationId: conversation._id,
-      text,
-      image,
+      text: text || "", // Tránh lỗi nếu text bị rỗng
+      image: image || "",
       encryptedAesKey,
       senderEncryptedAesKey,
       iv,
       shaHash,
+      // Lưu thông tin file
+      fileUrl: uploadedFileUrl || "",
+      fileName: fileName || "",
+      fileType: fileType || "",
+      fileSize: fileSize || 0,
     });
+
+    // ==========================================
+    // 3. PHÁT SÓNG QUA SOCKET.IO
+    // ==========================================
     const receiverSocketId = getReceiverSocketId(partnerId);
     if (receiverSocketId) {
       io.to(receiverSocketId).emit("newMessage", newMessage);
     }
+
     conversation.lastMessage = newMessage._id;
     await conversation.save();
 
     res.status(200).json(newMessage);
   } catch (error) {
+    console.error("Lỗi khi gửi tin nhắn:", error);
     next(error);
   }
 };

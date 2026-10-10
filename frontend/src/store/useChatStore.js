@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { axiosInstance } from "../lib/axios.js";
 import { useAuthStore } from "./useAuthStore.js";
-import { E2EE } from "../lib/E2EE.js";
+import { E2EE, buf2base64 } from "../lib/E2EE.js"; // Import thêm buf2base64
 
 // Hàm tách JSON sau khi giải mã
 const parseDecryptedPayload = (decryptedString, originalImage) => {
@@ -23,6 +23,7 @@ export const useChatStore = create((set, get) => ({
   selectedUser: null,
   isMessagesLoading: false,
   isContactsLoading: false,
+  isTyping: false,
 
   setSelectedUser: (selectedUser) =>
     set({ selectedUser, messages: [], sendError: null }),
@@ -48,9 +49,12 @@ export const useChatStore = create((set, get) => ({
 
       const decryptedMessages = await Promise.all(
         rawMessages.map(async (msg) => {
-          const isMe = msg.senderId === authUser._id;
+          // BỎ QUA GIẢI MÃ NẾU ĐÂY LÀ TIN NHẮN FILE (Sẽ giải mã khi user bấm Tải xuống)
+          if (msg.fileUrl) {
+            return msg;
+          }
 
-          // Lấy Public Key của người gửi để xác thực chữ ký
+          const isMe = msg.senderId === authUser._id;
           const senderPubKey = isMe
             ? authUser.publicKey
             : get().selectedUser.publicKey;
@@ -100,74 +104,141 @@ export const useChatStore = create((set, get) => ({
     }
   },
 
-  sendMessage: async ({ text, image, receiverId }) => {
+  sendMessage: async ({ text, image, file, receiverId }) => {
     const { selectedUser } = get();
     if (!selectedUser) return false;
     set({ sendError: null });
+
     try {
-      let payloadToSend = { text, image };
+      let success = true;
+      const { authUser, myPrivateKey } = useAuthStore.getState();
 
-      if (selectedUser.publicKey) {
-        const { authUser, myPrivateKey } = useAuthStore.getState();
-        if (!myPrivateKey) {
-          set({
-            sendError:
-              "Trình duyệt này không có khóa riêng của bạn nên không thể mã hóa tin nhắn.",
-          });
-          return false;
-        }
-
-        const combinedPayload = JSON.stringify({
-          text: text || "",
-          image: image || "",
+      if (!myPrivateKey && selectedUser.publicKey) {
+        set({
+          sendError:
+            "Trình duyệt này không có khóa riêng của bạn nên không thể mã hóa tin nhắn.",
         });
+        return false;
+      }
+
+      // ==========================================
+      // 1. NẾU CÓ FILE -> MÃ HÓA VÀ GỬI THÀNH 1 TIN NHẮN RIÊNG
+      // ==========================================
+      if (file && selectedUser.publicKey) {
         const myPrivateKeyBase64 = await E2EE.exportPrivateKey(myPrivateKey);
 
-        const startEncryptTime = performance.now();
-        const encryptedData = await E2EE.encryptMessage(
-          combinedPayload,
+        console.log(`[FILE] Bắt đầu mã hóa file: ${file.name}`);
+        const encryptedFile = await E2EE.encryptFile(
+          file.buffer,
           selectedUser.publicKey,
           authUser.publicKey,
           myPrivateKeyBase64,
         );
-        const endEncryptTime = performance.now();
 
-        payloadToSend = { ...encryptedData, image: "" };
+        const payloadToSend = {
+          fileBase64: encryptedFile.fileBase64,
+          fileName: file.name,
+          fileType: file.type,
+          fileSize: file.size,
+          encryptedAesKey: encryptedFile.encryptedAesKey,
+          senderEncryptedAesKey: encryptedFile.senderEncryptedAesKey,
+          iv: encryptedFile.iv,
+          shaHash: encryptedFile.shaHash,
+        };
 
-        // 2. ĐO KÍCH THƯỚC DỮ LIỆU (TÍNH BẰNG KILOBYTE)
-        const originalSize = new Blob([combinedPayload]).size;
-        const encryptedSize = new Blob([JSON.stringify(payloadToSend)]).size;
-
-        // IN KẾT QUẢ RA CONSOLE (F12)
-        console.log("========================================");
-        console.log(
-          `[THỜI GIAN] Mã hóa & Ký số: ${(endEncryptTime - startEncryptTime).toFixed(2)} ms`,
+        const res = await axiosInstance.post(
+          `/messages/send/${receiverId}`,
+          payloadToSend,
         );
-        console.log(
-          `[KÍCH THƯỚC] Bản rõ gốc: ${(originalSize / 1024).toFixed(2)} KB`,
-        );
-        console.log(
-          `[KÍCH THƯỚC] Bản mã gửi đi: ${(encryptedSize / 1024).toFixed(2)} KB`,
-        );
-        console.log(
-          `[ĐÁNH GIÁ] Tỷ lệ phình to dữ liệu: ${((encryptedSize / originalSize) * 100).toFixed(2)}%`,
-        );
-        console.log("========================================");
+        if (get().selectedUser?._id === receiverId) {
+          set({ messages: [...get().messages, res.data] });
+        }
       }
-      const res = await axiosInstance.post(
-        `/messages/send/${receiverId}`,
-        payloadToSend,
-      );
 
-      if (get().selectedUser?._id === receiverId) {
-        set({ messages: [...get().messages, { ...res.data, text, image }] });
+      // ==========================================
+      // 2. NẾU CÓ TEXT / IMAGE -> GỬI THÊM 1 TIN NHẮN
+      // ==========================================
+      if (text || image) {
+        let payloadToSend = { text, image };
+
+        if (selectedUser.publicKey) {
+          const combinedPayload = JSON.stringify({
+            text: text || "",
+            image: image || "",
+          });
+          const myPrivateKeyBase64 = await E2EE.exportPrivateKey(myPrivateKey);
+
+          const encryptedData = await E2EE.encryptMessage(
+            combinedPayload,
+            selectedUser.publicKey,
+            authUser.publicKey,
+            myPrivateKeyBase64,
+          );
+
+          payloadToSend = { ...encryptedData, image: "" };
+        }
+
+        const res = await axiosInstance.post(
+          `/messages/send/${receiverId}`,
+          payloadToSend,
+        );
+        if (get().selectedUser?._id === receiverId) {
+          set({ messages: [...get().messages, { ...res.data, text, image }] });
+        }
       }
-      return true;
+
+      return success;
     } catch (error) {
       set({
         sendError: error.response?.data?.message || "Gửi tin nhắn thất bại",
       });
       return false;
+    }
+  },
+
+  // ==========================================
+  // HÀM TẢI VÀ GIẢI MÃ FILE KHI USER BẤM NÚT
+  // ==========================================
+  downloadFile: async (msg) => {
+    try {
+      const { authUser, myPrivateKey } = useAuthStore.getState();
+      const { selectedUser } = get();
+
+      const isMe = msg.senderId === authUser._id;
+      const senderPubKey = isMe ? authUser.publicKey : selectedUser.publicKey;
+
+      // 1. Tải file đã mã hóa từ Cloudinary dưới dạng nhị phân (Buffer)
+      const response = await fetch(msg.fileUrl);
+      const buffer = await response.arrayBuffer();
+
+      // 2. Chuyển thành Base64 để đưa vào hàm giải mã
+      const fileBase64 = buf2base64(buffer);
+      const encryptedPayload = {
+        fileBase64: fileBase64,
+        encryptedAesKey: isMe ? msg.senderEncryptedAesKey : msg.encryptedAesKey,
+        iv: msg.iv,
+        shaHash: msg.shaHash,
+      };
+
+      // 3. Giải mã bằng khóa Private
+      const decryptedBuffer = await E2EE.decryptFile(
+        encryptedPayload,
+        myPrivateKey,
+        senderPubKey,
+      );
+
+      if (!decryptedBuffer) {
+        throw new Error("Lỗi giải mã hoặc Chữ ký số không hợp lệ.");
+      }
+
+      // 4. Tạo URL để trình duyệt tự động tải xuống
+      const blob = new Blob([decryptedBuffer], {
+        type: msg.fileType || "application/octet-stream",
+      });
+      return URL.createObjectURL(blob);
+    } catch (error) {
+      console.error("Lỗi tải/giải mã file:", error);
+      return null;
     }
   },
 
@@ -179,30 +250,23 @@ export const useChatStore = create((set, get) => ({
 
     socket.on("newMessage", async (newMessage) => {
       if (newMessage.senderId === selectedUser._id) {
+        // NẾU LÀ TIN NHẮN FILE -> KHÔNG GIẢI MÃ LIỀN, HIỆN LÊN UI LUÔN
+        if (newMessage.fileUrl) {
+          set({ messages: [...get().messages, newMessage] });
+          return;
+        }
+
         const { myPrivateKey } = useAuthStore.getState();
-
-        // Lấy Public Key của đối phương để xác thực
         const senderPubKey = selectedUser.publicKey;
-
         let plainText = newMessage.text;
         let finalImage = newMessage.image;
 
         if (newMessage.encryptedAesKey && myPrivateKey) {
-          // BẮT ĐẦU ĐO THỜI GIAN GIẢI MÃ
-          const startDecryptTime = performance.now();
-
           const decryptedString = await E2EE.decryptMessage(
             newMessage,
             myPrivateKey,
             senderPubKey,
           );
-
-          // KẾT THÚC ĐO THỜI GIAN
-          const endDecryptTime = performance.now();
-          console.log(
-            `⏱️ [THỜI GIAN] Giải mã & Xác thực chữ ký: ${(endDecryptTime - startDecryptTime).toFixed(2)} ms`,
-          );
-
           const parsed = parseDecryptedPayload(
             decryptedString,
             newMessage.image,
@@ -217,6 +281,20 @@ export const useChatStore = create((set, get) => ({
           image: finalImage,
         };
         set({ messages: [...get().messages, decryptedMessage] });
+        set({ isTyping: false });
+      }
+    });
+
+    socket.on("userTyping", ({ senderId }) => {
+      // Chỉ hiện Typing nếu người đang gõ chính là người mình đang mở đoạn chat
+      if (get().selectedUser?._id === senderId) {
+        set({ isTyping: true });
+      }
+    });
+
+    socket.on("userStoppedTyping", ({ senderId }) => {
+      if (get().selectedUser?._id === senderId) {
+        set({ isTyping: false });
       }
     });
   },
@@ -225,6 +303,8 @@ export const useChatStore = create((set, get) => ({
     const socket = useAuthStore.getState().socket;
     if (socket) {
       socket.off("newMessage");
+      socket.off("userTyping"); // NHỚ TẮT LẮNG NGHE
+      socket.off("userStoppedTyping"); // NHỚ TẮT LẮNG NGHE
     }
   },
 }));

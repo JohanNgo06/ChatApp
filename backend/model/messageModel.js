@@ -14,22 +14,37 @@ const messageSchema = new mongoose.Schema(
     },
     text: {
       type: String,
-      required: true,
+      // ĐÃ BỎ `required: true` vì tin nhắn có thể chỉ chứa File/Ảnh
     },
     encryptedAesKey: {
-      type: String, // Lưu khóa AES đã bị bọc bởi RSA
+      type: String,
     },
     senderEncryptedAesKey: {
-      type: String, // THÊM DÒNG NÀY: Khóa dành cho người gửi tự xem lại
+      type: String,
     },
     iv: {
-      type: String, // Vector khởi tạo ngẫu nhiên của AES
+      type: String,
     },
     shaHash: {
-      type: String, // Mã băm SHA-256 để kiểm tra toàn vẹn
+      type: String,
     },
     image: {
       type: String,
+    },
+    // ==========================================
+    // CÁC TRƯỜNG MỚI ĐỂ LƯU FILE MÃ HÓA
+    // ==========================================
+    fileUrl: {
+      type: String, // Link tải file thô (đã mã hóa) từ Cloudinary
+    },
+    fileName: {
+      type: String, // Tên file gốc (ví dụ: bao-cao.pdf) để hiển thị UI
+    },
+    fileType: {
+      type: String, // Đuôi file (pdf, docx, zip...) để chọn Icon UI
+    },
+    fileSize: {
+      type: Number, // Dung lượng file (byte)
     },
   },
   { timestamps: true },

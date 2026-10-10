@@ -29,6 +29,21 @@ io.on("connection", (socket) => {
     userSocketMap[userId] = socket.id;
   }
 
+  socket.on("typing", ({ receiverId }) => {
+    const receiverSocketId = getReceiverSocketId(receiverId);
+    if (receiverSocketId) {
+      // Bắn sự kiện "userTyping" kèm ID của người đang gõ cho người nhận
+      io.to(receiverSocketId).emit("userTyping", { senderId: userId });
+    }
+  });
+
+  socket.on("stopTyping", ({ receiverId }) => {
+    const receiverSocketId = getReceiverSocketId(receiverId);
+    if (receiverSocketId) {
+      io.to(receiverSocketId).emit("userStoppedTyping", { senderId: userId });
+    }
+  });
+
   // PHÁT TÍN HIỆU REAL-TIME: Báo cho TẤT CẢ client biết danh sách online mới nhất
   io.emit("getOnlineUsers", Object.keys(userSocketMap));
 

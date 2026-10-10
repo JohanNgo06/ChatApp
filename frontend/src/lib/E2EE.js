@@ -233,4 +233,143 @@ export const E2EE = {
       return "[Lỗi giải mã E2EE]";
     }
   },
+
+  // ==========================================
+  // 6. QUY TRÌNH GỬI FILE (ĐA PHƯƠNG TIỆN)
+  // ==========================================
+  encryptFile: async (
+    fileBuffer, // Dữ liệu nhị phân của file (ArrayBuffer)
+    receiverPublicKeyBase64,
+    myPublicKeyBase64,
+    myPrivateKeyBase64,
+  ) => {
+    // 1. Ký số nội dung file gốc để đảm bảo tính toàn vẹn
+    const privKey = await window.crypto.subtle.importKey(
+      "pkcs8",
+      base642buf(myPrivateKeyBase64),
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      true,
+      ["sign"],
+    );
+    const signatureBuffer = await window.crypto.subtle.sign(
+      "RSASSA-PKCS1-v1_5",
+      privKey,
+      fileBuffer,
+    );
+
+    // 2. Sinh khóa phiên AES (Khóa cực mạnh, tốc độ cao để mã hóa file nặng)
+    const aesKey = await window.crypto.subtle.generateKey(
+      { name: "AES-GCM", length: 256 },
+      true,
+      ["encrypt", "decrypt"],
+    );
+
+    // 3. Mã hóa toàn bộ dữ liệu file bằng AES
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const cipherBuffer = await window.crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: iv },
+      aesKey,
+      fileBuffer,
+    );
+
+    // 4. Mã hóa chiếc khóa AES bằng RSA của người nhận
+    const rawAesKey = await window.crypto.subtle.exportKey("raw", aesKey);
+    const receiverPubKey = await E2EE.importPublicKey(receiverPublicKeyBase64);
+    const encryptedAesBuffer = await window.crypto.subtle.encrypt(
+      { name: "RSA-OAEP" },
+      receiverPubKey,
+      rawAesKey,
+    );
+
+    // 5. Mã hóa chiếc khóa AES bằng RSA của chính mình (để mình cũng xem lại được file)
+    let senderEncryptedAesBuffer = null;
+    if (myPublicKeyBase64) {
+      const myPubKey = await E2EE.importPublicKey(myPublicKeyBase64);
+      senderEncryptedAesBuffer = await window.crypto.subtle.encrypt(
+        { name: "RSA-OAEP" },
+        myPubKey,
+        rawAesKey,
+      );
+    }
+
+    // Đóng gói và trả về định dạng Base64 để Frontend gửi lên Backend (Cloudinary/DB)
+    return {
+      fileBase64: buf2base64(cipherBuffer), // File đã biến thành 1 chuỗi ký tự vô nghĩa
+      encryptedAesKey: buf2base64(encryptedAesBuffer),
+      senderEncryptedAesKey: senderEncryptedAesBuffer
+        ? buf2base64(senderEncryptedAesBuffer)
+        : "",
+      iv: buf2base64(iv),
+      shaHash: buf2base64(signatureBuffer), // Chữ ký chống giả mạo
+    };
+  },
+
+  // ==========================================
+  // 7. QUY TRÌNH NHẬN FILE (ĐA PHƯƠNG TIỆN)
+  // ==========================================
+  decryptFile: async (
+    encryptedPayload, // Object payload từ server trả về { fileBase64, encryptedAesKey, iv, shaHash }
+    myPrivateKey,
+    senderPublicKeyBase64,
+  ) => {
+    try {
+      if (!encryptedPayload.encryptedAesKey || !encryptedPayload.fileBase64)
+        return null;
+
+      // 1. Dùng khóa RSA Private của mình để mở khóa lấy lại khóa AES
+      const decryptedAesRaw = await window.crypto.subtle.decrypt(
+        { name: "RSA-OAEP" },
+        myPrivateKey,
+        base642buf(encryptedPayload.encryptedAesKey),
+      );
+      const aesKey = await window.crypto.subtle.importKey(
+        "raw",
+        decryptedAesRaw,
+        { name: "AES-GCM" },
+        true,
+        ["encrypt", "decrypt"],
+      );
+
+      // 2. Dùng khóa AES vừa giải mã để mở khóa File
+      const decryptedBuffer = await window.crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: base642buf(encryptedPayload.iv) },
+        aesKey,
+        base642buf(encryptedPayload.fileBase64),
+      );
+
+      // 3. Quét Chữ ký số để xác nhận file không bị hacker chèn mã độc trên đường truyền
+      if (senderPublicKeyBase64 && encryptedPayload.shaHash) {
+        try {
+          const pubKey = await window.crypto.subtle.importKey(
+            "spki",
+            base642buf(senderPublicKeyBase64),
+            { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+            true,
+            ["verify"],
+          );
+          const isValidSignature = await window.crypto.subtle.verify(
+            "RSASSA-PKCS1-v1_5",
+            pubKey,
+            base642buf(encryptedPayload.shaHash),
+            decryptedBuffer,
+          );
+          if (!isValidSignature) {
+            console.error(
+              "[E2EE] CẢNH BÁO: Chữ ký số bị sai! File có thể đã bị sửa đổi.",
+            );
+            return null; // Từ chối mở file
+          }
+        } catch (e) {
+          console.error("[E2EE] Lỗi quét chữ ký số", e);
+          return null;
+        }
+      }
+
+      // 4. Trả về ArrayBuffer nguyên thủy của file để Frontend hiển thị ra màn hình hoặc tải xuống
+      return decryptedBuffer;
+    } catch (error) {
+      console.error("[E2EE] Lỗi giải mã file:", error);
+      return null;
+    }
+  },
 };

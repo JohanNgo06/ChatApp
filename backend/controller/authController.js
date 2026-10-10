@@ -4,52 +4,41 @@ import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import { ENV } from "../lib/env.js";
 import cloudinary from "../lib/cloudinary.js";
+import nodemailer from "nodemailer";
 
-export const signup = async (req, res, next) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: ENV.USER_EMAIL,
+    pass: ENV.PASS_EMAIL,
+  },
+});
+
+export const verifyOTP = async (req, res, next) => {
   try {
-    const { name, email, password, publicKey } = req.body;
-    if (!name || !email || !password) {
-      return res.status(400).json({ message: "All field are required" });
-    }
+    const { userId, otp } = req.body;
 
-    if (password.length < 6) {
-      return res
-        .status(400)
-        .json({ message: "Password must be 6 character or above" });
-    }
+    const user = await User.findById(userId);
+    if (!user)
+      return res.status(404).json({ message: "Không tìm thấy người dùng" });
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      return res.status(400).json({ message: "Invalid email format" });
-    }
+    if (user.isVerified)
+      return res.status(400).json({ message: "Tài khoản đã được xác minh" });
 
-    const isExists = await User.findOne({ email });
+    // Kiểm tra mã OTP và thời gian hết hạn
+    if (user.otp !== otp)
+      return res.status(400).json({ message: "Mã OTP không chính xác" });
+    if (user.otpExpires < new Date())
+      return res.status(400).json({ message: "Mã OTP đã hết hạn" });
 
-    if (isExists) {
-      return res.status(404).json({ message: "User already exists" });
-    }
+    // Cập nhật trạng thái xác minh và xóa mã OTP
+    user.isVerified = true;
+    user.otp = undefined;
+    user.otpExpires = undefined;
+    await user.save();
 
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
-    const newUser = await User.create(
-      [
-        {
-          name,
-          email,
-          password: hashedPassword,
-          publicKey: publicKey || "",
-        },
-      ],
-      { session },
-    );
-
-    const userResponse = newUser[0].toObject();
-    delete userResponse.password;
-
-    const token = jwt.sign({ userId: newUser[0]._id }, ENV.JWT_SECRET, {
+    // CẤP TOKEN SAU KHI XÁC MINH THÀNH CÔNG
+    const token = jwt.sign({ userId: user._id }, ENV.JWT_SECRET, {
       expiresIn: ENV.JWT_EXPIRES_IN,
     });
 
@@ -60,12 +49,96 @@ export const signup = async (req, res, next) => {
       secure: ENV.NODE_ENV !== "development",
     });
 
-    await session.commitTransaction();
-    session.endSession();
+    const userResponse = user.toObject();
+    delete userResponse.password;
+
     res.status(200).json({
       success: true,
-      message: "Created new user",
+      message: "Xác minh thành công",
       data: { token, user: userResponse },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const signup = async (req, res, next) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const { name, email, password, publicKey } = req.body;
+    if (!name || !email || !password) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    if (password.length < 6) {
+      return res
+        .status(400)
+        .json({ message: "Password must be 6 characters or above" });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ message: "Invalid email format" });
+    }
+
+    const isExists = await User.findOne({ email });
+
+    if (isExists) {
+      // FIX LỖI ĐĂNG KÝ LẠI: Nếu tài khoản tồn tại nhưng CHƯA xác minh -> Xóa đi cho phép đăng ký lại
+      if (!isExists.isVerified) {
+        await User.findByIdAndDelete(isExists._id);
+      } else {
+        return res.status(400).json({ message: "Email đã được sử dụng" });
+      }
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // TẠO MÃ OTP 6 SỐ
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpires = new Date(Date.now() + 5 * 60 * 1000); // OTP hết hạn sau 5 phút
+
+    const newUser = await User.create(
+      [
+        {
+          name,
+          email,
+          password: hashedPassword,
+          publicKey: publicKey || "",
+          isVerified: false,
+          otp: otp,
+          otpExpires: otpExpires,
+        },
+      ],
+      { session },
+    );
+
+    // GỬI EMAIL
+    const mailOptions = {
+      from: `"WhatSoup App" <${ENV.USER_EMAIL}>`,
+      to: email,
+      subject: "Mã xác nhận đăng ký tài khoản",
+      html: `
+        <div style="font-family: Arial, sans-serif; padding: 20px;">
+          <h2>Xin chào ${name},</h2>
+          <p>Cảm ơn bạn đã đăng ký tài khoản. Đây là mã xác nhận (OTP) của bạn:</p>
+          <h1 style="color: #5c40e8; letter-spacing: 5px;">${otp}</h1>
+          <p>Mã này sẽ hết hạn trong vòng 5 phút.</p>
+        </div>
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.status(200).json({
+      success: true,
+      message: "Vui lòng kiểm tra email để lấy mã OTP",
+      data: { userId: newUser[0]._id },
     });
   } catch (error) {
     await session.abortTransaction();
@@ -80,13 +153,21 @@ export const signin = async (req, res, next) => {
     const user = await User.findOne({ email });
 
     if (!user) {
-      return res.status(404).json({ message: "User not exists" });
+      return res.status(404).json({ message: "Tài khoản không tồn tại" });
+    }
+
+    // FIX LỖI ĐĂNG NHẬP: Chặn đứng tài khoản chưa nhập OTP
+    if (!user.isVerified) {
+      return res.status(401).json({
+        message:
+          "Tài khoản chưa được xác minh. Vui lòng đăng ký lại để nhận mã OTP.",
+      });
     }
 
     const comparePassword = await bcrypt.compare(password, user.password);
 
     if (!comparePassword) {
-      return res.status(401).json({ message: "Invalid email or password" });
+      return res.status(401).json({ message: "Sai email hoặc mật khẩu" });
     }
 
     const token = jwt.sign({ userId: user._id }, ENV.JWT_SECRET, {
@@ -105,7 +186,7 @@ export const signin = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      message: "User signed in successfully",
+      message: "Đăng nhập thành công",
       data: {
         token,
         user: userResponse,
@@ -173,26 +254,21 @@ export const checkAuth = (req, res) => {
 
 export const searchUsers = async (req, res) => {
   try {
-    // Lấy từ khóa tìm kiếm từ query param (vd: /search?keyword=abc)
     const keyword = req.query.keyword;
 
-    // Nếu không nhập gì, có thể trả về mảng rỗng
     if (!keyword) {
       return res.status(200).json([]);
     }
 
-    // Lấy ID của user đang đăng nhập hiện tại từ middleware
     const currentUserId = req.user._id;
 
-    // Tìm kiếm các user khớp với name hoặc email (không phân biệt chữ hoa chữ thường)
-    // VÀ phải LOẠI TRỪ user đang đăng nhập ra khỏi kết quả
     const users = await User.find({
-      _id: { $ne: currentUserId }, // $ne: Not Equal (Loại trừ ID của chính mình)
+      _id: { $ne: currentUserId },
       $or: [
-        { name: { $regex: keyword, $options: "i" } }, // $regex để tìm kiếm tương đối (LIKE), $options: "i" là không phân biệt hoa thường
+        { name: { $regex: keyword, $options: "i" } },
         { email: { $regex: keyword, $options: "i" } },
       ],
-    }).select("-password -privateKey"); // BẢO MẬT: Bỏ chọn trường password và privateKey không gửi về Frontend
+    }).select("-password -privateKey");
 
     res.status(200).json(users);
   } catch (error) {

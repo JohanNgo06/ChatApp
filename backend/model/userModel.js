@@ -18,6 +18,16 @@ const userSchema = new mongoose.Schema(
       required: true,
       minlength: 6,
     },
+    isVerified: {
+      type: Boolean,
+      default: false,
+    },
+    otp: {
+      type: String, // Lưu mã OTP 6 số
+    },
+    otpExpires: {
+      type: Date, // Thời gian hết hạn của OTP (vd: 5 phút)
+    },
     profilePic: {
       type: String,
       default: "",

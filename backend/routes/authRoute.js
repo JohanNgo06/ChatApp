@@ -3,6 +3,7 @@ import {
   signup,
   signin,
   signout,
+  verifyOTP,
   updateProfile,
   checkAuth,
   searchUsers,
@@ -13,6 +14,7 @@ import arcjetMiddleware from "../middleware/arcjetMiddleware.js";
 const authRoute = Router();
 
 authRoute.use(arcjetMiddleware);
+authRoute.post("/verify-otp", verifyOTP);
 
 authRoute.post("/signin", signin);
 authRoute.post("/signout", signout);

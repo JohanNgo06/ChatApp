@@ -37,3 +37,41 @@ export const accessConversation = async (req, res, next) => {
     next(error);
   }
 };
+
+export const createGroupChat = async (req, res, next) => {
+  try {
+    const { groupName, users } = req.body;
+    // users là mảng ID các thành viên được mời (chưa bao gồm người tạo)
+
+    if (!users || users.length === 0) {
+      return res
+        .status(400)
+        .json({
+          message: "Vui lòng chọn ít nhất 1 thành viên khác để tạo nhóm",
+        });
+    }
+
+    // Thêm chính người tạo vào danh sách participants
+    const participants = [...users, req.user.id];
+
+    const groupChat = await Conversation.create({
+      participants,
+      isGroupChat: true,
+      groupName: groupName || "Nhóm mới",
+      groupAdmin: req.user.id,
+    });
+
+    // Populate thông tin thành viên để trả về cho Frontend hiển thị ngay
+    const fullGroupChat = await Conversation.findById(groupChat._id).populate(
+      "participants",
+      "-password -privateKey",
+    );
+
+    res.status(200).json({
+      success: true,
+      data: fullGroupChat,
+    });
+  } catch (error) {
+    next(error);
+  }
+};

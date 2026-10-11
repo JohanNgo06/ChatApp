@@ -12,30 +12,33 @@ const messageSchema = new mongoose.Schema(
       ref: "Conversation",
       required: true,
     },
-    text: {
-      type: String,
-      // ĐÃ BỎ `required: true` vì tin nhắn có thể chỉ chứa File/Ảnh
-      // ĐÃ BỎ `required: true` vì tin nhắn có thể chỉ chứa File/Ảnh
+    text: { type: String },
+    image: { type: String },
+
+    // Dành cho chat 1-1 cũ
+    encryptedAesKey: { type: String },
+    senderEncryptedAesKey: { type: String },
+
+    // DÀNH CHO CHAT NHÓM: Lưu { "userId1": "encryptedAesKey1", "userId2": "encryptedAesKey2" }
+    groupEncryptedKeys: {
+      type: Map,
+      of: String,
+      default: {},
     },
-    encryptedAesKey: {
-      type: String,
-    },
-    senderEncryptedAesKey: {
-      type: String,
-    },
-    iv: {
-      type: String,
-    },
-    shaHash: {
-      type: String,
-    },
-    image: {
-      type: String,
-    },
+
+    iv: { type: String },
+    shaHash: { type: String },
+
+    // File
+    fileUrl: { type: String, default: "" },
+    fileName: { type: String, default: "" },
+    fileType: { type: String, default: "" },
+    fileSize: { type: Number, default: 0 },
+
+    isRead: { type: Boolean, default: false },
   },
   { timestamps: true },
 );
 
 const Message = mongoose.model("Message", messageSchema);
-
 export default Message;

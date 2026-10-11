@@ -15,9 +15,21 @@ const conversationSchema = new mongoose.Schema(
       ref: "Message",
     },
 
+    isGroupChat: {
+      type: Boolean,
+      default: false,
+    },
     groupName: {
       type: String,
       trim: true,
+    },
+    groupAdmin: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    groupAvatar: {
+      type: String,
+      default: "",
     },
   },
   { timestamps: true },

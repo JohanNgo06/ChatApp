@@ -75,23 +75,50 @@ export const useAuthStore = create((set, get) => ({
 
       const payload = { ...data, publicKey: pubKeyBase64 };
 
-      // 2. Gọi API Đăng ký (Trả về userId thay vì token)
+      // 2. Gọi API Đăng ký
       const res = await axiosInstance.post("/auth/signup", payload);
 
-      // 3. Lưu thông tin tạm thời vào State để chờ bước xác minh OTP
-      set({
-        pendingUserId: res.data.data.userId,
-        pendingPrivateKeyBase64: privKeyBase64,
-        pendingPrivateKey: keyPair.privateKey,
-      });
+      // ==========================================
+      // 3. KIỂM TRA CỜ BYPASS OTP TỪ BACKEND
+      // ==========================================
+      if (res.data.requireOtp === false) {
+        // [TÀI KHOẢN TEST] - Đã Bypass OTP -> Thực hiện login luôn
+        const user = res.data.user || res.data.data.user;
+        const token = res.data.token || res.data.data?.token;
 
-      toast.success(
-        res.data.message || "Vui lòng kiểm tra email để lấy mã OTP",
-      );
-      return true; // Trả về true để Component chuyển sang màn hình OTP
+        // Lưu Token và Khóa bí mật
+        if (token) localStorage.setItem("chat-token", token);
+        localStorage.setItem(keyName(user._id), privKeyBase64);
+
+        // Nạp vào State
+        set({
+          authUser: user,
+          myPrivateKey: keyPair.privateKey,
+          pendingUserId: null,
+          pendingPrivateKeyBase64: null,
+          pendingPrivateKey: null,
+        });
+
+        get().connectSocket();
+        toast.success("Đăng ký thành công (Chế độ Test Bypass OTP)!");
+
+        return { success: true, requireOtp: false };
+      } else {
+        // [TÀI KHOẢN THẬT] - Cần OTP -> Lưu tạm chờ xác minh
+        set({
+          pendingUserId: res.data.data.userId,
+          pendingPrivateKeyBase64: privKeyBase64,
+          pendingPrivateKey: keyPair.privateKey,
+        });
+
+        toast.success(
+          res.data.message || "Vui lòng kiểm tra email để lấy mã OTP",
+        );
+        return { success: true, requireOtp: true };
+      }
     } catch (error) {
       toast.error(error.response?.data?.message || "Lỗi đăng ký");
-      return false;
+      return { success: false };
     } finally {
       set({ isSigningUp: false });
     }

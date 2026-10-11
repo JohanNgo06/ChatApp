@@ -372,4 +372,121 @@ export const E2EE = {
       return null;
     }
   },
+  // ==========================================
+  // 8. QUY TRÌNH GỬI TIN NHẮN NHÓM (MULTI-RECIPIENT)
+  // ==========================================
+  encryptMessageForGroup: async (
+    plainText,
+    participants, // Mảng chứa thông tin các thành viên: [{ _id, publicKey }, ...]
+    myPrivateKeyBase64,
+  ) => {
+    // 1. Ký số để chứng minh mình là người gửi
+    const digitalSignature = await E2EE.signMessage(
+      plainText,
+      myPrivateKeyBase64,
+    );
+
+    // 2. Sinh MỘT khóa phiên AES chung cho cả nhóm
+    const aesKey = await window.crypto.subtle.generateKey(
+      { name: "AES-GCM", length: 256 },
+      true,
+      ["encrypt", "decrypt"],
+    );
+
+    // 3. Mã hóa nội dung tin nhắn bằng khóa AES chung này
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const encodedText = new TextEncoder().encode(plainText);
+    const cipherBuffer = await window.crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: iv },
+      aesKey,
+      encodedText,
+    );
+
+    // 4. Lặp qua tất cả thành viên, dùng Public Key của từng người để bọc cái khóa AES lại
+    const rawAesKey = await window.crypto.subtle.exportKey("raw", aesKey);
+    const groupEncryptedKeys = {}; // Lưu trữ dạng: { "userId": "aes_key_da_ma_hoa" }
+
+    for (const user of participants) {
+      if (!user.publicKey) continue; // Bỏ qua nếu user chưa tạo khóa
+
+      try {
+        const userPubKey = await E2EE.importPublicKey(user.publicKey);
+        const encryptedAesBuffer = await window.crypto.subtle.encrypt(
+          { name: "RSA-OAEP" },
+          userPubKey,
+          rawAesKey,
+        );
+        groupEncryptedKeys[user._id] = buf2base64(encryptedAesBuffer);
+      } catch (err) {
+        console.error(`Lỗi mã hóa khóa cho user ${user._id}`, err);
+      }
+    }
+
+    return {
+      text: buf2base64(cipherBuffer),
+      groupEncryptedKeys, // Map khóa của nhóm
+      iv: buf2base64(iv),
+      shaHash: digitalSignature,
+    };
+  },
+
+  // ==========================================
+  // 9. QUY TRÌNH GỬI FILE NHÓM (MULTI-RECIPIENT)
+  // ==========================================
+  encryptFileForGroup: async (fileBuffer, participants, myPrivateKeyBase64) => {
+    // 1. Ký số file gốc
+    const privKey = await window.crypto.subtle.importKey(
+      "pkcs8",
+      base642buf(myPrivateKeyBase64),
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      true,
+      ["sign"],
+    );
+    const signatureBuffer = await window.crypto.subtle.sign(
+      "RSASSA-PKCS1-v1_5",
+      privKey,
+      fileBuffer,
+    );
+
+    // 2. Sinh MỘT khóa AES cho file
+    const aesKey = await window.crypto.subtle.generateKey(
+      { name: "AES-GCM", length: 256 },
+      true,
+      ["encrypt", "decrypt"],
+    );
+
+    // 3. Mã hóa toàn bộ file bằng AES (tốc độ cao)
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
+    const cipherBuffer = await window.crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: iv },
+      aesKey,
+      fileBuffer,
+    );
+
+    // 4. Mã hóa khóa AES cho từng thành viên
+    const rawAesKey = await window.crypto.subtle.exportKey("raw", aesKey);
+    const groupEncryptedKeys = {};
+
+    for (const user of participants) {
+      if (!user.publicKey) continue;
+      try {
+        const userPubKey = await E2EE.importPublicKey(user.publicKey);
+        const encryptedAesBuffer = await window.crypto.subtle.encrypt(
+          { name: "RSA-OAEP" },
+          userPubKey,
+          rawAesKey,
+        );
+        groupEncryptedKeys[user._id] = buf2base64(encryptedAesBuffer);
+      } catch (err) {
+        console.error(`Lỗi mã hóa khóa File cho user ${user._id}`, err);
+      }
+    }
+
+    return {
+      fileBase64: buf2base64(cipherBuffer),
+      groupEncryptedKeys,
+      iv: buf2base64(iv),
+      shaHash: buf2base64(signatureBuffer),
+    };
+  },
 };

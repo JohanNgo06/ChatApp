@@ -3,6 +3,10 @@ import { axiosInstance } from "../lib/axios.js";
 import { useAuthStore } from "./useAuthStore.js";
 import { E2EE, buf2base64 } from "../lib/E2EE.js";
 
+// =========================================
+// HELPER FUNCTIONS
+// =========================================
+
 // Hàm tách JSON sau khi giải mã
 const parseDecryptedPayload = (decryptedString, originalImage) => {
   try {
@@ -16,6 +20,36 @@ const parseDecryptedPayload = (decryptedString, originalImage) => {
   return { text: decryptedString, image: originalImage };
 };
 
+// Hàm tìm đúng AES Key cho người đang mở màn hình (Hỗ trợ cả Group và 1-1)
+const extractMyAesKey = (msg, myUserId, isMe) => {
+  if (msg.groupEncryptedKeys && msg.groupEncryptedKeys[myUserId]) {
+    // Nếu là chat nhóm, lấy Key trong Map của mình
+    return msg.groupEncryptedKeys[myUserId];
+  } else if (isMe && msg.senderEncryptedAesKey) {
+    // 1-1, là người gửi tự đọc lại tin nhắn của mình
+    return msg.senderEncryptedAesKey;
+  } else if (!isMe && msg.encryptedAesKey) {
+    // 1-1, là người nhận đọc tin nhắn
+    return msg.encryptedAesKey;
+  }
+  return null;
+};
+
+// Hàm tìm Public Key của người gửi (Hỗ trợ cả Group và 1-1)
+const findSenderPublicKey = (msgSenderIdStr, isMe, selectedUser, authUser) => {
+  if (selectedUser.isGroupChat) {
+    // Trong chat nhóm, tìm user trong mảng participants
+    const sender = selectedUser.participants?.find(
+      (p) => p._id === msgSenderIdStr,
+    );
+    return sender?.publicKey;
+  }
+  return isMe ? authUser.publicKey : selectedUser.publicKey;
+};
+
+// =========================================
+// ZUSTAND STORE
+// =========================================
 export const useChatStore = create((set, get) => ({
   sendError: null,
   messages: [],
@@ -24,6 +58,8 @@ export const useChatStore = create((set, get) => ({
   isMessagesLoading: false,
   isContactsLoading: false,
   isTyping: false,
+  conversations: [],
+  isConversationsLoading: false,
 
   setSelectedUser: (selectedUser) =>
     set({ selectedUser, messages: [], sendError: null }),
@@ -40,61 +76,96 @@ export const useChatStore = create((set, get) => ({
     }
   },
 
-  getMessages: async (userId) => {
+  getConversations: async () => {
+    set({ isConversationsLoading: true });
+    try {
+      const res = await axiosInstance.get("/conversation/");
+      set({ conversations: res.data.data });
+    } catch (error) {
+      console.log("Lỗi lấy danh sách đoạn chat:", error);
+    } finally {
+      set({ isConversationsLoading: false });
+    }
+  },
+
+  createGroup: async (groupName, users) => {
+    try {
+      const res = await axiosInstance.post("/conversation/group/create", {
+        groupName,
+        users,
+      });
+      // Thêm nhóm mới tạo lên đầu danh sách conversations hiện tại
+      set({ conversations: [res.data.data, ...get().conversations] });
+      return res.data.data;
+    } catch (error) {
+      console.error("Lỗi tạo nhóm:", error);
+      return null;
+    }
+  },
+
+  getMessages: async (userIdOrGroupId) => {
     set({ isMessagesLoading: true });
     try {
-      const res = await axiosInstance.get(`/messages/${userId}`);
+      const res = await axiosInstance.get(`/messages/${userIdOrGroupId}`);
       const rawMessages = res.data;
       const { authUser, myPrivateKey } = useAuthStore.getState();
+      const { selectedUser } = get();
 
       const decryptedMessages = await Promise.all(
         rawMessages.map(async (msg) => {
           if (msg.fileUrl) {
-            return msg;
+            return msg; // File sẽ được giải mã riêng khi bấm nút tải
           }
 
-          const isMe = msg.senderId === authUser._id;
-          const senderPubKey = isMe
-            ? authUser.publicKey
-            : get().selectedUser.publicKey;
+          const senderIdStr = msg.senderId._id || msg.senderId;
+          const isMe = senderIdStr === authUser._id;
+          const senderPubKey = findSenderPublicKey(
+            senderIdStr,
+            isMe,
+            selectedUser,
+            authUser,
+          );
 
           let plainText = msg.text;
           let finalImage = msg.image;
 
-          if (isMe && msg.senderEncryptedAesKey && myPrivateKey) {
-            const fakeMsgObj = {
+          // Lấy đúng AES Key của mình
+          const myEncryptedAesKey = extractMyAesKey(msg, authUser._id, isMe);
+
+          if (myEncryptedAesKey && myPrivateKey && senderPubKey) {
+            // Đúc lại payload giả để tái sử dụng hàm E2EE cũ
+            const payloadToDecrypt = {
               ...msg,
-              encryptedAesKey: msg.senderEncryptedAesKey,
+              encryptedAesKey: myEncryptedAesKey,
             };
+
             const decryptedString = await E2EE.decryptMessage(
-              fakeMsgObj,
+              payloadToDecrypt,
               myPrivateKey,
               senderPubKey,
             );
-            const parsed = parseDecryptedPayload(decryptedString, msg.image);
-            plainText = parsed.text;
-            finalImage = parsed.image;
+
+            // Xử lý cảnh báo chữ ký số
+            if (decryptedString.startsWith("[CẢNH BÁO")) {
+              plainText = decryptedString;
+            } else {
+              const parsed = parseDecryptedPayload(decryptedString, msg.image);
+              plainText = parsed.text;
+              finalImage = parsed.image;
+            }
           } else if (
-            isMe &&
-            msg.encryptedAesKey &&
-            !msg.senderEncryptedAesKey
+            msg.encryptedAesKey ||
+            (msg.groupEncryptedKeys &&
+              Object.keys(msg.groupEncryptedKeys).length > 0)
           ) {
-            plainText = "[Tin nhắn cũ không thể giải mã]";
-          } else if (!isMe && msg.encryptedAesKey && myPrivateKey) {
-            const decryptedString = await E2EE.decryptMessage(
-              msg,
-              myPrivateKey,
-              senderPubKey,
-            );
-            const parsed = parseDecryptedPayload(decryptedString, msg.image);
-            plainText = parsed.text;
-            finalImage = parsed.image;
+            plainText = "[Tin nhắn không thể giải mã]";
           }
 
           return { ...msg, text: plainText, image: finalImage };
         }),
       );
-      if (get().selectedUser?._id !== userId) return;
+
+      if (get().selectedUser?._id !== userIdOrGroupId) return;
       set({ messages: decryptedMessages });
     } catch (error) {
       console.log("Lỗi lấy tin nhắn:", error);
@@ -111,7 +182,7 @@ export const useChatStore = create((set, get) => ({
     try {
       const { authUser, myPrivateKey } = useAuthStore.getState();
 
-      if (!myPrivateKey && selectedUser.publicKey) {
+      if (!myPrivateKey) {
         set({
           sendError:
             "Trình duyệt này không có khóa riêng của bạn nên không thể mã hóa tin nhắn.",
@@ -119,26 +190,47 @@ export const useChatStore = create((set, get) => ({
         return false;
       }
 
-      // 1. Gửi file nếu có
-      if (file && selectedUser.publicKey) {
-        const myPrivateKeyBase64 = await E2EE.exportPrivateKey(myPrivateKey);
+      const myPrivateKeyBase64 = await E2EE.exportPrivateKey(myPrivateKey);
 
-        const encryptedFile = await E2EE.encryptFile(
-          file.buffer,
-          selectedUser.publicKey,
-          authUser.publicKey,
-          myPrivateKeyBase64,
-        );
+      // ===================================
+      // 1. GỬI FILE
+      // ===================================
+      if (file) {
+        let encryptedFile = {};
+
+        if (selectedUser.isGroupChat) {
+          // GỬI FILE NHÓM
+          encryptedFile = await E2EE.encryptFileForGroup(
+            file.buffer,
+            selectedUser.participants,
+            myPrivateKeyBase64,
+          );
+        } else {
+          // GỬI FILE 1-1
+          if (!selectedUser.publicKey) {
+            set({ sendError: "Người dùng này chưa có khóa công khai." });
+            return false;
+          }
+          encryptedFile = await E2EE.encryptFile(
+            file.buffer,
+            selectedUser.publicKey,
+            authUser.publicKey,
+            myPrivateKeyBase64,
+          );
+        }
 
         const payloadToSend = {
           fileBase64: encryptedFile.fileBase64,
           fileName: file.name,
           fileType: file.type,
           fileSize: file.size,
-          encryptedAesKey: encryptedFile.encryptedAesKey,
-          senderEncryptedAesKey: encryptedFile.senderEncryptedAesKey,
           iv: encryptedFile.iv,
           shaHash: encryptedFile.shaHash,
+          // Lưu khóa 1-1
+          encryptedAesKey: encryptedFile.encryptedAesKey,
+          senderEncryptedAesKey: encryptedFile.senderEncryptedAesKey,
+          // Lưu khóa Nhóm
+          groupEncryptedKeys: encryptedFile.groupEncryptedKeys,
         };
 
         const res = await axiosInstance.post(
@@ -150,24 +242,37 @@ export const useChatStore = create((set, get) => ({
         }
       }
 
-      // 2. Gửi Text / Image nếu có
+      // ===================================
+      // 2. GỬI TEXT / IMAGE
+      // ===================================
       if (text || image) {
-        let payloadToSend = { text, image };
+        const combinedPayload = JSON.stringify({
+          text: text || "",
+          image: image || "",
+        });
 
-        if (selectedUser.publicKey) {
-          const combinedPayload = JSON.stringify({
-            text: text || "",
-            image: image || "",
-          });
-          const myPrivateKeyBase64 = await E2EE.exportPrivateKey(myPrivateKey);
+        let payloadToSend = {};
 
+        if (selectedUser.isGroupChat) {
+          // GỬI TEXT NHÓM
+          const encryptedGroupData = await E2EE.encryptMessageForGroup(
+            combinedPayload,
+            selectedUser.participants,
+            myPrivateKeyBase64,
+          );
+          payloadToSend = encryptedGroupData;
+        } else {
+          // GỬI TEXT 1-1
+          if (!selectedUser.publicKey) {
+            set({ sendError: "Người dùng này chưa có khóa công khai." });
+            return false;
+          }
           const encryptedData = await E2EE.encryptMessage(
             combinedPayload,
             selectedUser.publicKey,
             authUser.publicKey,
             myPrivateKeyBase64,
           );
-
           payloadToSend = { ...encryptedData, image: "" };
         }
 
@@ -194,16 +299,25 @@ export const useChatStore = create((set, get) => ({
       const { authUser, myPrivateKey } = useAuthStore.getState();
       const { selectedUser } = get();
 
-      const isMe = msg.senderId === authUser._id;
-      const senderPubKey = isMe ? authUser.publicKey : selectedUser.publicKey;
+      const senderIdStr = msg.senderId._id || msg.senderId;
+      const isMe = senderIdStr === authUser._id;
+      const senderPubKey = findSenderPublicKey(
+        senderIdStr,
+        isMe,
+        selectedUser,
+        authUser,
+      );
 
       const response = await fetch(msg.fileUrl);
       const buffer = await response.arrayBuffer();
-
       const fileBase64 = buf2base64(buffer);
+
+      // Tìm đúng AES Key
+      const myEncryptedAesKey = extractMyAesKey(msg, authUser._id, isMe);
+
       const encryptedPayload = {
         fileBase64: fileBase64,
-        encryptedAesKey: isMe ? msg.senderEncryptedAesKey : msg.encryptedAesKey,
+        encryptedAesKey: myEncryptedAesKey,
         iv: msg.iv,
         shaHash: msg.shaHash,
       };
@@ -237,7 +351,11 @@ export const useChatStore = create((set, get) => ({
     socket.on("newMessage", async (newMessage) => {
       set({ isTyping: false });
 
-      if (newMessage.senderId === selectedUser._id) {
+      // CẬP NHẬT KIỂM TRA CHO CHAT NHÓM: Tin nhắn này thuộc về conversation đang mở
+      if (
+        newMessage.conversationId === selectedUser._id ||
+        newMessage.senderId === selectedUser._id
+      ) {
         if (newMessage.fileUrl) {
           set({ messages: [...get().messages, newMessage] });
           socket.emit("markMessageAsRead", {
@@ -247,23 +365,47 @@ export const useChatStore = create((set, get) => ({
           return;
         }
 
-        const { myPrivateKey } = useAuthStore.getState();
-        const senderPubKey = selectedUser.publicKey;
+        const { authUser, myPrivateKey } = useAuthStore.getState();
+        const senderIdStr = newMessage.senderId._id || newMessage.senderId;
+        const isMe = senderIdStr === authUser._id;
+
+        const senderPubKey = findSenderPublicKey(
+          senderIdStr,
+          isMe,
+          selectedUser,
+          authUser,
+        );
+        const myEncryptedAesKey = extractMyAesKey(
+          newMessage,
+          authUser._id,
+          isMe,
+        );
+
         let plainText = newMessage.text;
         let finalImage = newMessage.image;
 
-        if (newMessage.encryptedAesKey && myPrivateKey) {
+        if (myEncryptedAesKey && myPrivateKey && senderPubKey) {
+          const payloadToDecrypt = {
+            ...newMessage,
+            encryptedAesKey: myEncryptedAesKey,
+          };
+
           const decryptedString = await E2EE.decryptMessage(
-            newMessage,
+            payloadToDecrypt,
             myPrivateKey,
             senderPubKey,
           );
-          const parsed = parseDecryptedPayload(
-            decryptedString,
-            newMessage.image,
-          );
-          plainText = parsed.text;
-          finalImage = parsed.image;
+
+          if (decryptedString.startsWith("[CẢNH BÁO")) {
+            plainText = decryptedString;
+          } else {
+            const parsed = parseDecryptedPayload(
+              decryptedString,
+              newMessage.image,
+            );
+            plainText = parsed.text;
+            finalImage = parsed.image;
+          }
         }
 
         const decryptedMessage = {
@@ -271,6 +413,7 @@ export const useChatStore = create((set, get) => ({
           text: plainText,
           image: finalImage,
         };
+
         set({ messages: [...get().messages, decryptedMessage] });
         socket.emit("markMessageAsRead", {
           messageId: newMessage._id,
@@ -280,6 +423,8 @@ export const useChatStore = create((set, get) => ({
     });
 
     socket.on("userTyping", ({ senderId }) => {
+      // Logic gõ phím hiện tại của bạn chỉ thiết kế cho 1-1,
+      // với group sẽ cần cải tiến server sau, tạm thời giữ nguyên
       if (get().selectedUser?._id === senderId) set({ isTyping: true });
     });
 

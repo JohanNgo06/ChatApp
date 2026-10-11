@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom'; // Thêm useNavigate
 import { 
   MessageSquare, User, Mail, Lock, Eye, EyeOff, 
   ArrowRight, CheckCircle2, Loader2, KeyRound 
@@ -8,6 +8,7 @@ import { useAuthStore } from '../store/useAuthStore';
 import toast from 'react-hot-toast';
 
 const SignUpPage = () => {
+  const navigate = useNavigate(); // Khởi tạo điều hướng
   const [showPassword, setShowPassword] = useState(false);
   const [step, setStep] = useState(1); // 1: Form Đăng ký, 2: Form OTP
   const [otp, setOtp] = useState('');
@@ -29,14 +30,24 @@ const SignUpPage = () => {
       toast.error("Mật khẩu xác nhận không khớp!");
       return;
     }
-    const success = await signup({
+    
+    // Gọi action signup và nhận về result thay vì boolean cũ
+    const result = await signup({
       name: formData.name,
       email: formData.email,
       password: formData.password,
     });
     
-    if (success) {
-      setStep(2); // Chuyển sang giao diện nhập OTP
+    if (result && result.success) {
+      // PHÂN LUỒNG ĐIỀU HƯỚNG
+      if (result.requireOtp === false) {
+        // Nếu là Test Account -> Bypass thẳng vào trang trong
+        // (Thay "/" bằng route trang chủ/chat của bạn nếu cần)
+        navigate("/"); 
+      } else {
+        // Tài khoản thật -> Mở form OTP
+        setStep(2); 
+      }
     }
   };
 
@@ -47,7 +58,10 @@ const SignUpPage = () => {
       toast.error("Vui lòng nhập đủ 6 số OTP");
       return;
     }
-    await verifyOTP(otp);
+    const success = await verifyOTP(otp);
+    if (success) {
+      navigate("/"); // Điều hướng khi OTP thành công
+    }
   };
 
   return (

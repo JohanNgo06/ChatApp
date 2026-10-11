@@ -1,23 +1,33 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  LogOut, Home, Search, Image as ImageIcon, Send, X, Loader2, MessageSquare, Lock, Paperclip, FileText, Download, Check, CheckCheck
+  LogOut, Home, Search, Image as ImageIcon, Send, X, Loader2, MessageSquare, Lock, Paperclip, FileText, Download, Check, CheckCheck, Users, Plus
 } from 'lucide-react';
 import { useAuthStore } from '../store/useAuthStore';
 import { useChatStore } from '../store/useChatStore';
 import { useFriendStore } from '../store/useFriendStore';
+import CreateGroupModal from '../components/CreateGroupModal'; // IMPORT MODAL MỚI
 
-const MAX_IMAGE_SIZE = 3 * 1024 * 1024; // 3MB
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB giới hạn cho File
+const MAX_IMAGE_SIZE = 3 * 1024 * 1024;
+const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
-const Avatar = ({ user, size = 'w-10 h-10' }) =>
-  user?.profilePic ? (
-    <img src={user.profilePic} alt={user.name} className={`${size} rounded-full object-cover shrink-0`} />
+// COMPONENT AVATAR ĐƯỢC NÂNG CẤP ĐỂ HỖ TRỢ HIỂN THỊ NHÓM
+const Avatar = ({ user, size = 'w-10 h-10' }) => {
+  if (user?.isGroupChat) {
+    return (
+      <div className={`${size} rounded-full bg-gradient-to-br from-[#5c40e8] to-[#8f7bf0] text-white flex items-center justify-center shrink-0 shadow-sm`}>
+        <Users className="w-5 h-5" />
+      </div>
+    );
+  }
+  return user?.profilePic ? (
+    <img src={user.profilePic} alt={user.name} className={`${size} rounded-full object-cover shrink-0 shadow-sm`} />
   ) : (
-    <div className={`${size} rounded-full bg-indigo-100 text-[#5c40e8] font-bold flex items-center justify-center shrink-0`}>
+    <div className={`${size} rounded-full bg-indigo-100 text-[#5c40e8] font-bold flex items-center justify-center shrink-0 shadow-sm`}>
       {user?.name?.[0]?.toUpperCase() || '?'}
     </div>
   );
+};
 
 const formatTime = (date) =>
   new Date(date).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
@@ -29,9 +39,10 @@ const ChatPage = () => {
   const { authUser, signout, onlineUsers, socket } = useAuthStore();
   const {
     messages, selectedUser, setSelectedUser, getMessages, sendMessage, downloadFile,
-    subscribeToMessages, unsubscribeFromMessages, isMessagesLoading, sendError, isTyping
+    subscribeToMessages, unsubscribeFromMessages, isMessagesLoading, sendError, isTyping,
+    conversations, getConversations, isConversationsLoading // THÊM STATE TỪ STORE
   } = useChatStore();
-  const { friends, isLoading: isFriendsLoading, fetchAll } = useFriendStore();
+  const { friends, fetchAll } = useFriendStore();
 
   const [filter, setFilter] = useState('');
   const [text, setText] = useState('');
@@ -41,27 +52,51 @@ const ChatPage = () => {
   const [isSending, setIsSending] = useState(false);
   const [downloadingMsgId, setDownloadingMsgId] = useState(null);
   const [typingTimeout, setTypingTimeout] = useState(null);
+  const [activeTab, setActiveTab] = useState('chats');
+  const filteredFriends = friends.filter((f) =>
+    f.name?.toLowerCase().includes(filter.toLowerCase())
+  );
+  
+  // TRẠNG THÁI MỞ MODAL TẠO NHÓM
+  const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
 
   const imageRef = useRef(null);
   const fileRef = useRef(null);
   const bottomRef = useRef(null);
 
   useEffect(() => {
-    fetchAll();
-  }, [fetchAll]);
+    fetchAll(); // Lấy bạn bè để dùng cho Modal tạo nhóm
+    getConversations(); // LẤY DANH SÁCH ĐOẠN CHAT (NHÓM + 1-1)
+  }, [fetchAll, getConversations]);
 
-  useEffect(() => {
-    const id = location.state?.userId;
-    if (!id) return;
-    const target = friends.find((f) => f._id === id);
-    if (target) {
-      if (selectedUser?._id !== id) setSelectedUser(target);
-      navigate(location.pathname, { replace: true, state: null });
+  // LUỒNG TẠO DANH SÁCH HIỂN THỊ LÊN SIDEBAR
+  // Biến dữ liệu conversation thô thành định dạng giống selectedUser để Component cũ hoạt động
+  const conversationList = conversations.map(conv => {
+    if (conv.isGroupChat) {
+      return {
+        _id: conv._id,
+        isGroupChat: true,
+        name: conv.groupName,
+        participants: conv.participants,
+        lastMessage: conv.lastMessage,
+        updatedAt: conv.updatedAt
+      };
+    } else {
+      // Chat 1-1: Tìm người bạn đang chat với mình
+      const partner = conv.participants.find(p => p._id !== authUser._id);
+      return {
+        ...partner,
+        isGroupChat: false,
+        conversationId: conv._id,
+        lastMessage: conv.lastMessage,
+        updatedAt: conv.updatedAt
+      };
     }
-  }, [friends, location.state, navigate, selectedUser?._id, setSelectedUser]);
+  });
 
   useEffect(() => {
     if (!selectedUser?._id) return;
+    // Chuyền ID Conversation hoặc ID User vào getMessages (Backend đã được cấu hình tự động phân loại)
     getMessages(selectedUser._id);
     subscribeToMessages();
     return () => unsubscribeFromMessages();
@@ -110,25 +145,22 @@ const ChatPage = () => {
     let fileData = null;
     if (file) {
       const buffer = await file.arrayBuffer();
-      fileData = {
-        buffer,
-        name: file.name,
-        type: file.type,
-        size: file.size
-      };
+      fileData = { buffer, name: file.name, type: file.type, size: file.size };
     }
 
     const ok = await sendMessage({
       text: text.trim(),
       image,
       file: fileData,
-      receiverId: selectedUser._id,
+      receiverId: selectedUser._id, // Trọng tâm: Gửi vào ID Nhóm hoặc ID Người Dùng
     });
 
     if (ok) {
       setText('');
       setImage(null);
       setFile(null);
+      // Gọi lại getConversations để Sidebar cập nhật tin nhắn mới nhất lên đầu
+      getConversations(); 
     }
     setIsSending(false);
   };
@@ -136,15 +168,11 @@ const ChatPage = () => {
   const handleInputChange = (e) => {
     setText(e.target.value);
     if (!socket || !selectedUser) return;
-
     socket.emit("typing", { receiverId: selectedUser._id });
-
     if (typingTimeout) clearTimeout(typingTimeout);
-
     const timeout = setTimeout(() => {
       socket.emit("stopTyping", { receiverId: selectedUser._id });
     }, 2000);
-    
     setTypingTimeout(timeout);
   };
 
@@ -163,25 +191,36 @@ const ChatPage = () => {
     setDownloadingMsgId(null);
   };
 
-  const isOnline = (id) => onlineUsers.includes(id);
-  const filteredFriends = friends.filter((f) =>
-    f.name?.toLowerCase().includes(filter.toLowerCase())
+  // Logic kiểm tra Online
+  const isOnline = (item) => {
+    if (item.isGroupChat) return false; // Nhóm thì không hiện chấm xanh online
+    return onlineUsers.includes(item._id);
+  };
+
+  // Lọc đoạn chat theo thanh search
+  const filteredConversations = conversationList.filter((item) =>
+    item.name?.toLowerCase().includes(filter.toLowerCase())
   );
   const errorMsg = localError || sendError;
 
   return (
     <div className="h-screen w-full flex bg-[#f0f2f5] font-sans overflow-hidden">
-      {/* CỘT TRÁI */}
+      {/* CỘT TRÁI - SIDEBAR */}
       <div className="w-[360px] lg:w-[400px] flex flex-col bg-white border-r border-gray-100 shrink-0 z-10 shadow-sm">
         <div className="p-5 pb-3">
           <div className="flex justify-between items-center mb-5">
             <div className="flex items-center gap-2">
-              <h2 className="text-xl font-bold text-gray-900">Đoạn chat</h2>
+              <h2 className="text-xl font-bold text-gray-900">
+                {activeTab === 'chats' ? 'Đoạn chat' : 'Bạn bè'}
+              </h2>
               <span className="bg-indigo-50 text-[#5c40e8] text-xs font-bold px-2 py-0.5 rounded-full">
-                {friends.length}
+                {activeTab === 'chats' ? conversationList.length : friends.length}
               </span>
             </div>
             <div className="flex items-center gap-1.5">
+              <button onClick={() => setIsGroupModalOpen(true)} className="p-2 bg-[#eef0ff] text-[#5c40e8] hover:bg-indigo-100 rounded-full transition-colors" title="Tạo nhóm mới">
+                <Plus className="w-4 h-4" />
+              </button>
               <button onClick={() => navigate('/home')} className="p-2 bg-gray-50 text-gray-600 hover:bg-indigo-50 hover:text-[#5c40e8] rounded-full transition-colors" title="Trang chủ">
                 <Home className="w-4 h-4" />
               </button>
@@ -190,43 +229,95 @@ const ChatPage = () => {
               </button>
             </div>
           </div>
+
+          {/* TAB SWITCHER: CHUYỂN ĐỔI GIỮA TRÒ CHUYỆN VÀ DANH BẠ */}
+          <div className="flex p-1 bg-gray-100 rounded-xl mb-4">
+            <button
+              onClick={() => setActiveTab('chats')}
+              className={`flex-1 py-1.5 text-sm font-semibold rounded-lg transition-colors ${activeTab === 'chats' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Trò chuyện
+            </button>
+            <button
+              onClick={() => setActiveTab('friends')}
+              className={`flex-1 py-1.5 text-sm font-semibold rounded-lg transition-colors ${activeTab === 'friends' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              Danh bạ
+            </button>
+          </div>
+
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <input value={filter} onChange={(e) => setFilter(e.target.value)} className="block w-full pl-9 pr-3 py-2.5 bg-[#f4f5f7] rounded-xl text-sm placeholder-gray-500 outline-none focus:ring-2 focus:ring-[#5c40e8]/20 focus:bg-white transition-all" placeholder="Tìm bạn bè..." />
+            <input value={filter} onChange={(e) => setFilter(e.target.value)} className="block w-full pl-9 pr-3 py-2.5 bg-[#f4f5f7] rounded-xl text-sm placeholder-gray-500 outline-none focus:ring-2 focus:ring-[#5c40e8]/20 focus:bg-white transition-all" placeholder="Tìm kiếm..." />
           </div>
         </div>
+
         <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-0.5">
-          {isFriendsLoading && friends.length === 0 ? (
-            <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-[#5c40e8]" /></div>
-          ) : filteredFriends.length === 0 ? (
-            <p className="text-center text-sm text-gray-400 py-10 px-6">Không tìm thấy bạn bè phù hợp.</p>
+          {activeTab === 'chats' ? (
+            // ==========================================
+            // RENDER DANH SÁCH ĐOẠN CHAT (NHÓM + 1-1)
+            // ==========================================
+            isConversationsLoading && conversations.length === 0 ? (
+              <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-[#5c40e8]" /></div>
+            ) : filteredConversations.length === 0 ? (
+              <p className="text-center text-sm text-gray-400 py-10 px-6">Chưa có đoạn chat nào.</p>
+            ) : (
+              filteredConversations.map((item) => {
+                const active = selectedUser?._id === item._id;
+                return (
+                  <div key={item._id} onClick={() => !active && setSelectedUser(item)} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${active ? 'bg-[#eef0ff]' : 'hover:bg-[#f4f5f7]'}`}>
+                    <div className="relative">
+                      <Avatar user={item} size="w-12 h-12" />
+                      {isOnline(item) && <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white rounded-full"></div>}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-bold text-gray-900 truncate">{item.name}</h4>
+                      <p className={`text-[13px] truncate ${isOnline(item) ? 'text-green-600' : 'text-gray-500'}`}>
+                        {item.isGroupChat ? (
+                          `${item.participants.length} thành viên`
+                        ) : (
+                          isOnline(item) ? 'Đang hoạt động' : 'Ngoại tuyến'
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })
+            )
           ) : (
-            filteredFriends.map((f) => {
-              const active = selectedUser?._id === f._id;
-              return (
-                <div key={f._id} onClick={() => !active && setSelectedUser(f)} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${active ? 'bg-[#eef0ff]' : 'hover:bg-[#f4f5f7]'}`}>
-                  <div className="relative">
-                    <Avatar user={f} size="w-12 h-12" />
-                    {isOnline(f._id) && <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white rounded-full"></div>}
+            // ==========================================
+            // RENDER DANH SÁCH BẠN BÈ (ĐỂ TẠO CHAT MỚI)
+            // ==========================================
+            filteredFriends.length === 0 ? (
+              <p className="text-center text-sm text-gray-400 py-10 px-6">Không có bạn bè nào.</p>
+            ) : (
+              filteredFriends.map((friend) => {
+                const active = selectedUser?._id === friend._id;
+                return (
+                  <div key={friend._id} onClick={() => !active && setSelectedUser({...friend, isGroupChat: false})} className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-colors ${active ? 'bg-[#eef0ff]' : 'hover:bg-[#f4f5f7]'}`}>
+                    <div className="relative">
+                      <Avatar user={friend} size="w-12 h-12" />
+                      {isOnline(friend) && <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white rounded-full"></div>}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-sm font-bold text-gray-900 truncate">{friend.name}</h4>
+                      <p className={`text-[13px] truncate ${isOnline(friend) ? 'text-green-600' : 'text-gray-500'}`}>
+                        {isOnline(friend) ? 'Đang hoạt động' : 'Ngoại tuyến'}
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <h4 className="text-sm font-bold text-gray-900 truncate">{f.name}</h4>
-                    <p className={`text-[13px] truncate ${isOnline(f._id) ? 'text-green-600' : 'text-gray-400'}`}>
-                      {isOnline(f._id) ? 'Đang hoạt động' : 'Ngoại tuyến'}
-                    </p>
-                  </div>
-                </div>
-              );
-            })
+                );
+              })
+            )
           )}
         </div>
       </div>
 
-      {/* CỘT PHẢI */}
+      {/* CỘT PHẢI - CHAT KHU VỰC */}
       {!selectedUser ? (
         <div className="flex-1 flex flex-col items-center justify-center text-gray-400 gap-3">
           <div className="bg-white p-5 rounded-full shadow-sm"><MessageSquare className="w-10 h-10 text-[#5c40e8]" /></div>
-          <p className="text-sm font-medium">Chọn một người bạn để bắt đầu trò chuyện</p>
+          <p className="text-sm font-medium">Chọn một người bạn hoặc nhóm để bắt đầu</p>
         </div>
       ) : (
         <div className="flex-1 flex flex-col bg-[#f0f2f5] relative min-w-0">
@@ -234,13 +325,19 @@ const ChatPage = () => {
             <div className="flex items-center gap-3">
               <div className="relative">
                 <Avatar user={selectedUser} />
-                {isOnline(selectedUser._id) && <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>}
+                {isOnline(selectedUser) && <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>}
               </div>
               <div>
                 <h3 className="text-base font-bold text-gray-900 leading-tight">{selectedUser.name}</h3>
                 <p className="text-xs text-gray-500 font-medium flex items-center gap-1 mt-0.5">
-                  {isOnline(selectedUser._id) ? <span className="text-green-600">Đang hoạt động</span> : <span>Ngoại tuyến</span>}
-                  {selectedUser.publicKey && <span className="flex items-center gap-1 ml-2 text-[#5c40e8]"><Lock className="w-3 h-3" /> Mã hóa đầu cuối</span>}
+                  {selectedUser.isGroupChat ? (
+                    <span>Nhóm • {selectedUser.participants.length} thành viên</span>
+                  ) : (
+                    isOnline(selectedUser) ? <span className="text-green-600">Đang hoạt động</span> : <span>Ngoại tuyến</span>
+                  )}
+                  {(!selectedUser.isGroupChat && selectedUser.publicKey) || selectedUser.isGroupChat ? (
+                     <span className="flex items-center gap-1 ml-2 text-[#5c40e8]"><Lock className="w-3 h-3" /> E2EE</span>
+                  ) : null}
                 </p>
               </div>
             </div>
@@ -253,12 +350,25 @@ const ChatPage = () => {
               <p className="text-center text-sm text-gray-400 py-10">Chưa có tin nhắn nào. Hãy gửi lời chào đầu tiên!</p>
             ) : (
               messages.map((msg) => {
-                const isMe = msg.senderId === authUser._id;
+                const isMe = msg.senderId === authUser._id || msg.senderId?._id === authUser._id;
+                
+                // Lấy thông tin người gửi nếu đây là chat nhóm
+                let senderInfo = null;
+                if (!isMe && selectedUser.isGroupChat) {
+                    const senderIdStr = msg.senderId?._id || msg.senderId;
+                    senderInfo = selectedUser.participants.find(p => p._id === senderIdStr);
+                }
+
                 return (
                   <div key={msg._id} className={`flex items-end gap-3 max-w-[70%] ${isMe ? 'self-end flex-row-reverse' : 'self-start'}`}>
-                    {!isMe && <Avatar user={selectedUser} size="w-8 h-8" />}
+                    {!isMe && <Avatar user={senderInfo || selectedUser} size="w-8 h-8" />}
                     
                     <div className={`flex flex-col gap-1 ${isMe ? 'items-end' : 'items-start'}`}>
+                      {/* Hiển thị tên người gửi nếu là tin nhắn nhóm và không phải do mình gửi */}
+                      {!isMe && selectedUser.isGroupChat && senderInfo && (
+                         <span className="text-xs text-gray-500 ml-1 mb-0.5">{senderInfo.name}</span>
+                      )}
+
                       <div className={`p-3.5 rounded-2xl shadow-sm ${
                         isMe ? 'bg-[#5c40e8] text-white rounded-br-sm' : 'bg-white text-gray-800 border border-gray-100 rounded-bl-sm'
                       }`}>
@@ -295,7 +405,7 @@ const ChatPage = () => {
                       
                       <div className={`flex items-center gap-1 mt-1 mx-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
                         <span className="text-[10px] text-gray-400">{formatTime(msg.createdAt)}</span>
-                        {isMe && (
+                        {isMe && !selectedUser.isGroupChat && (
                           msg.isRead ? (
                             <CheckCheck className="w-[14px] h-[14px] text-blue-500" title="Đã xem" />
                           ) : (
@@ -309,7 +419,6 @@ const ChatPage = () => {
               })
             )}
 
-            {/* HIỂN THỊ ĐANG GÕ... */}
             {isTyping && (
               <div className="flex items-end gap-3 max-w-[70%] self-start">
                 <Avatar user={selectedUser} size="w-8 h-8" />
@@ -376,6 +485,12 @@ const ChatPage = () => {
           </div>
         </div>
       )}
+
+      {/* RENDER MODAL TẠO NHÓM Ở ĐÂY */}
+      <CreateGroupModal 
+        isOpen={isGroupModalOpen} 
+        onClose={() => setIsGroupModalOpen(false)} 
+      />
     </div>
   );
 };

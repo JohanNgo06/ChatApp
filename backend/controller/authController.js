@@ -14,6 +14,8 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+const TEST_EMAILS = ["test1@gmail.com", "test2@gmail.com", "admin@test.com"];
+
 export const verifyOTP = async (req, res, next) => {
   try {
     const { userId, otp } = req.body;
@@ -67,6 +69,7 @@ export const signup = async (req, res, next) => {
   session.startTransaction();
   try {
     const { name, email, password, publicKey } = req.body;
+
     if (!name || !email || !password) {
       return res.status(400).json({ message: "All fields are required" });
     }
@@ -96,9 +99,19 @@ export const signup = async (req, res, next) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // TẠO MÃ OTP 6 SỐ
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpExpires = new Date(Date.now() + 5 * 60 * 1000); // OTP hết hạn sau 5 phút
+    // ==========================================
+    // KIỂM TRA XEM CÓ PHẢI TÀI KHOẢN TEST KHÔNG
+    // ==========================================
+    const isTestAccount =
+      ENV.NODE_ENV !== "production" && TEST_EMAILS.includes(email);
+
+    // CHỈ TẠO OTP NẾU LÀ NGƯỜI DÙNG THẬT
+    const otp = isTestAccount
+      ? null
+      : Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpires = isTestAccount
+      ? null
+      : new Date(Date.now() + 5 * 60 * 1000);
 
     const newUser = await User.create(
       [
@@ -107,7 +120,7 @@ export const signup = async (req, res, next) => {
           email,
           password: hashedPassword,
           publicKey: publicKey || "",
-          isVerified: false,
+          isVerified: isTestAccount, // Nếu là Test Account -> Xác minh luôn
           otp: otp,
           otpExpires: otpExpires,
         },
@@ -115,7 +128,39 @@ export const signup = async (req, res, next) => {
       { session },
     );
 
-    // GỬI EMAIL
+    // ==========================================
+    // PHÂN NHÁNH: TÀI KHOẢN TEST vs TÀI KHOẢN THẬT
+    // ==========================================
+    if (isTestAccount) {
+      // NẾU LÀ TÀI KHOẢN TEST: Không gửi email, cấp quyền luôn
+      await session.commitTransaction();
+      session.endSession();
+
+      console.log(`[TEST MODE]: Bỏ qua OTP cho tài khoản mới ${email}`);
+
+      // 1. TẠO TOKEN TẠI ĐÂY (Giống cách bạn làm ở hàm login/verifyOtp)
+      // Lưu ý: Nếu bạn có một hàm generateToken riêng (VD: import generateToken from '../lib/utils.js') thì hãy dùng nó.
+      // Còn nếu dùng trực tiếp thư viện jsonwebtoken, bạn có thể viết như sau:
+      const token = jwt.sign({ userId: newUser[0]._id }, ENV.JWT_SECRET, {
+        expiresIn: "7d",
+      });
+
+      // (Tùy chọn) Nếu ứng dụng của bạn lưu Token vào Cookie:
+      // res.cookie("jwt", token, { maxAge: 7 * 24 * 60 * 60 * 1000, httpOnly: true, sameSite: "strict" });
+
+      return res.status(200).json({
+        success: true,
+        message: "Đăng ký thành công (Bypass OTP)",
+        data: {
+          userId: newUser[0]._id,
+          token: token, // <--- QUAN TRỌNG: Trả về Token để Frontend lưu vào localStorage
+        },
+        user: newUser[0],
+        requireOtp: false, // Báo cho Frontend không cần hiện form nhập OTP
+      });
+    }
+
+    // NẾU LÀ TÀI KHOẢN THẬT: Gửi email bình thường
     const mailOptions = {
       from: `"WhatSoup App" <${ENV.USER_EMAIL}>`,
       to: email,
@@ -131,7 +176,6 @@ export const signup = async (req, res, next) => {
     };
 
     await transporter.sendMail(mailOptions);
-
     await session.commitTransaction();
     session.endSession();
 
@@ -139,6 +183,7 @@ export const signup = async (req, res, next) => {
       success: true,
       message: "Vui lòng kiểm tra email để lấy mã OTP",
       data: { userId: newUser[0]._id },
+      requireOtp: true, // Báo cho Frontend mở form nhập OTP
     });
   } catch (error) {
     await session.abortTransaction();

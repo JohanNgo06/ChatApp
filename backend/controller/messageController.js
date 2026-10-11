@@ -22,11 +22,19 @@ export const getUsersForSidebar = async (req, res) => {
 export const getMessages = async (req, res, next) => {
   try {
     const currentUserId = req.user._id;
-    const partnerId = req.params.partnerId;
+    // Đặt tên biến rõ ràng: có thể là ID của Group hoặc ID của User khác
+    const receiverIdOrGroupId = req.params.partnerId;
 
-    const conversation = await Conversation.findOne({
-      participants: { $all: [currentUserId, partnerId] },
-    });
+    // 1. Thử tìm xem ID truyền lên có phải là ID của Group không
+    let conversation = await Conversation.findById(receiverIdOrGroupId);
+
+    // 2. Nếu không tìm thấy Group, nghĩa là đây là Chat 1-1, tìm theo logic cũ
+    if (!conversation) {
+      conversation = await Conversation.findOne({
+        participants: { $all: [currentUserId, receiverIdOrGroupId] },
+        isGroupChat: { $ne: true }, // Đảm bảo không lấy nhầm group
+      });
+    }
 
     if (!conversation) {
       return res.status(200).json([]);
@@ -36,22 +44,29 @@ export const getMessages = async (req, res, next) => {
       conversationId: conversation._id,
     }).sort({ createdAt: 1 });
 
-    const unreadMessages = messages.filter(
-      (m) => m.senderId.toString() === partnerId.toString() && !m.isRead,
-    );
-
-    if (unreadMessages.length > 0) {
-      // Cập nhật DB
-      await Message.updateMany(
-        { _id: { $in: unreadMessages.map((m) => m._id) } },
-        { $set: { isRead: true } },
+    // ==========================================
+    // LOGIC ĐÁNH DẤU ĐÃ ĐỌC (Tạm thời chỉ áp dụng cho 1-1)
+    // ==========================================
+    if (!conversation.isGroupChat) {
+      const unreadMessages = messages.filter(
+        // Thay partnerId bằng receiverIdOrGroupId
+        (m) =>
+          m.senderId.toString() === receiverIdOrGroupId.toString() && !m.isRead,
       );
-      // Bắn Socket cho người gửi biết TẤT CẢ tin nhắn đã được xem
-      const partnerSocketId = getReceiverSocketId(partnerId);
-      if (partnerSocketId) {
-        io.to(partnerSocketId).emit("messagesReadBulk", {
-          conversationId: conversation._id,
-        });
+
+      if (unreadMessages.length > 0) {
+        // Cập nhật DB
+        await Message.updateMany(
+          { _id: { $in: unreadMessages.map((m) => m._id) } },
+          { $set: { isRead: true } },
+        );
+        // Bắn Socket cho người gửi biết TẤT CẢ tin nhắn đã được xem
+        const partnerSocketId = getReceiverSocketId(receiverIdOrGroupId); // Sửa ở đây
+        if (partnerSocketId) {
+          io.to(partnerSocketId).emit("messagesReadBulk", {
+            conversationId: conversation._id,
+          });
+        }
       }
     }
 
@@ -64,30 +79,38 @@ export const getMessages = async (req, res, next) => {
 export const sendMessage = async (req, res, next) => {
   try {
     const currentUserId = req.user._id;
-    const partnerId = req.params.partnerId;
+    const receiverIdOrGroupId = req.params.partnerId;
 
     // Nhận thêm các trường liên quan đến File từ Frontend gửi lên
     const {
       text,
       image,
-      encryptedAesKey,
-      senderEncryptedAesKey,
       iv,
       shaHash,
+      encryptedAesKey,
+      senderEncryptedAesKey, // Dùng cho 1-1
+      groupEncryptedKeys, // Dùng cho Group
       fileBase64,
       fileName,
       fileType,
       fileSize,
     } = req.body;
 
-    let conversation = await Conversation.findOne({
-      participants: { $all: [currentUserId, partnerId] },
-    });
+    let conversation = await Conversation.findById(receiverIdOrGroupId);
 
+    // Nếu không tìm thấy Group, nghĩa là đang chat 1-1, tìm theo logic cũ
     if (!conversation) {
-      conversation = await Conversation.create({
-        participants: [currentUserId, partnerId],
+      conversation = await Conversation.findOne({
+        participants: { $all: [currentUserId, receiverIdOrGroupId] },
+        isGroupChat: { $ne: true }, // Đảm bảo là chat 1-1
       });
+
+      if (!conversation) {
+        conversation = await Conversation.create({
+          participants: [currentUserId, receiverIdOrGroupId],
+          isGroupChat: false,
+        });
+      }
     }
 
     // ==========================================
@@ -113,25 +136,39 @@ export const sendMessage = async (req, res, next) => {
     const newMessage = await Message.create({
       senderId: currentUserId,
       conversationId: conversation._id,
-      text: text || "", // Tránh lỗi nếu text bị rỗng
+      text: text || "",
       image: image || "",
-      encryptedAesKey,
-      senderEncryptedAesKey,
       iv,
       shaHash,
-      // Lưu thông tin file
+      encryptedAesKey,
+      senderEncryptedAesKey,
+      groupEncryptedKeys: groupEncryptedKeys || {}, // LƯU MAP KEY CỦA NHÓM
       fileUrl: uploadedFileUrl || "",
       fileName: fileName || "",
       fileType: fileType || "",
       fileSize: fileSize || 0,
     });
 
-    // ==========================================
     // 3. PHÁT SÓNG QUA SOCKET.IO
-    // ==========================================
-    const receiverSocketId = getReceiverSocketId(partnerId);
-    if (receiverSocketId) {
-      io.to(receiverSocketId).emit("newMessage", newMessage);
+    if (conversation.isGroupChat) {
+      // Nếu là chat nhóm: Bắn sự kiện cho tất cả thành viên trong nhóm (trừ người gửi)
+      conversation.participants.forEach((participantId) => {
+        if (participantId.toString() !== currentUserId.toString()) {
+          const receiverSocketId = getReceiverSocketId(
+            participantId.toString(),
+          );
+          if (receiverSocketId) {
+            io.to(receiverSocketId).emit("newMessage", newMessage);
+          }
+        }
+      });
+    } else {
+      // Nếu là chat 1-1 logic cũ
+      // Nếu receiverIdOrGroupId ở đây không phải Group ID, thì nó là User ID của partner
+      const receiverSocketId = getReceiverSocketId(receiverIdOrGroupId);
+      if (receiverSocketId) {
+        io.to(receiverSocketId).emit("newMessage", newMessage);
+      }
     }
 
     conversation.lastMessage = newMessage._id;

@@ -259,29 +259,47 @@ export const signout = async (req, res, next) => {
 
 export const updateProfile = async (req, res, next) => {
   try {
-    const { profilePic } = req.body;
-
-    if (!profilePic)
-      return res.status(400).json({ message: "Profile pic is required" });
-
+    // Nhận thêm name và password từ Frontend
+    const { profilePic, name, password } = req.body;
     const userId = req.user._id;
-    const responseUpload = await cloudinary.uploader.upload(profilePic);
 
-    const updatedUser = await User.findByIdAndUpdate(
-      userId,
-      {
-        profilePic: responseUpload.secure_url,
-      },
-      { new: true },
-    );
+    const updateData = {};
 
-    const responseData = updatedUser.toObject();
-    delete responseData.password;
+    // 1. Nếu có cập nhật Tên
+    if (name) {
+      updateData.name = name;
+    }
+
+    // 2. Nếu có cập nhật Mật khẩu
+    if (password) {
+      if (password.length < 6) {
+        return res.status(400).json({ message: "Mật khẩu phải từ 6 ký tự" });
+      }
+      const salt = await bcrypt.genSalt(10);
+      updateData.password = await bcrypt.hash(password, salt);
+    }
+
+    // 3. Nếu có cập nhật Ảnh đại diện
+    if (profilePic) {
+      const responseUpload = await cloudinary.uploader.upload(profilePic);
+      updateData.profilePic = responseUpload.secure_url;
+    }
+
+    // Nếu không gửi lên gì cả
+    if (Object.keys(updateData).length === 0) {
+      return res
+        .status(400)
+        .json({ message: "Không có dữ liệu nào được cập nhật" });
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(userId, updateData, {
+      new: true,
+    }).select("-password -privateKey"); // Loại bỏ các trường nhạy cảm trước khi trả về
 
     res.status(200).json({
       success: true,
-      message: "Uploaded profile pic",
-      data: { responseData },
+      message: "Cập nhật hồ sơ thành công",
+      data: updatedUser, // Sửa lại key trả về cho gọn
     });
   } catch (error) {
     next(error);

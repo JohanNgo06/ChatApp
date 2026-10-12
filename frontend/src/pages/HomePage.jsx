@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Edit, Search, UserPlus, X, AtSign, Check, Copy, Loader2, LogOut,
+  Edit, Search, UserPlus, X, AtSign, Check, Copy, Loader2, LogOut, Settings, Camera, Lock, User
 } from 'lucide-react';
 import { useAuthStore } from '../store/useAuthStore';
 import { useFriendStore } from '../store/useFriendStore';
+import toast from 'react-hot-toast';
 
 const Avatar = ({ user, size = 'w-10 h-10' }) =>
   user?.profilePic ? (
@@ -15,34 +16,41 @@ const Avatar = ({ user, size = 'w-10 h-10' }) =>
     </div>
   );
 
-// Lọc bạn bè
-
-
 const HomePage = () => {
   const navigate = useNavigate();
-  const { authUser, signout } = useAuthStore();
+  const { authUser, signout, updateProfile, isUpdatingProfile } = useAuthStore();
   const {
     friends, requests, suggestions, searchResults,
     isLoading, isSearching, error,
     fetchAll, searchUsers, clearSearch,
     sendRequest, acceptRequest, rejectRequest,
-    subscribeToFriendEvents, // THÊM DÒNG NÀY
+    subscribeToFriendEvents,
     unsubscribeFromFriendEvents
   } = useFriendStore();
 
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('');
   const [copied, setCopied] = useState(false);
+  
+  // State cho Modal Cập nhật hồ sơ
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [profileData, setProfileData] = useState({ name: '', password: '' });
+  const [previewImg, setPreviewImg] = useState(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     fetchAll();
-    
-    // Bật lắng nghe Socket khi vào trang
     subscribeToFriendEvents();
-
-    // Tắt lắng nghe khi rời khỏi trang để tránh rò rỉ bộ nhớ
     return () => unsubscribeFromFriendEvents();
   }, [fetchAll, subscribeToFriendEvents, unsubscribeFromFriendEvents]);
+
+  // Khởi tạo dữ liệu form khi mở Modal
+  useEffect(() => {
+    if (isProfileModalOpen && authUser) {
+      setProfileData({ name: authUser.name, password: '' });
+      setPreviewImg(authUser.profilePic);
+    }
+  }, [isProfileModalOpen, authUser]);
 
   const handleSearch = (e) => {
     e.preventDefault();
@@ -55,18 +63,45 @@ const HomePage = () => {
     setTimeout(() => setCopied(false), 1500);
   };
 
+  const handleImgChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return toast.error("Chỉ chấp nhận file ảnh");
+    if (file.size > 3 * 1024 * 1024) return toast.error("Kích thước ảnh tối đa 3MB");
+
+    const reader = new FileReader();
+    reader.onload = () => setPreviewImg(reader.result);
+    reader.readAsDataURL(file);
+  };
+
+  const handleUpdateProfile = async (e) => {
+    e.preventDefault();
+    const payload = {};
+    if (profileData.name !== authUser.name) payload.name = profileData.name;
+    if (profileData.password) payload.password = profileData.password;
+    if (previewImg && previewImg !== authUser.profilePic) payload.profilePic = previewImg;
+
+    if (Object.keys(payload).length === 0) {
+      toast("Không có thông tin nào thay đổi", { icon: "ℹ️" });
+      return setIsProfileModalOpen(false);
+    }
+
+    const success = await updateProfile(payload);
+    if (success) setIsProfileModalOpen(false);
+  };
+
   const filteredFriends = friends.filter((f) =>
-  f.name?.toLowerCase().includes(filter.toLowerCase())
-);
+    f.name?.toLowerCase().includes(filter.toLowerCase())
+  );
 
   return (
     <div className="h-screen w-full flex bg-[#eef2ff] font-sans overflow-hidden">
       {/* ===== CỘT TRÁI: DANH SÁCH BẠN BÈ / ĐOẠN CHAT ===== */}
-      <div className="w-[360px] lg:w-[400px] flex flex-col bg-white border-r border-gray-100 shrink-0">
+      <div className="w-[360px] lg:w-[400px] flex flex-col bg-white border-r border-gray-100 shrink-0 shadow-sm">
         <div className="p-5 pb-3">
           <div className="flex justify-between items-center mb-4">
             <div className="flex items-center gap-2">
-              <h2 className="text-xl font-bold text-gray-900">Đoạn chat</h2>
+              <h2 className="text-xl font-bold text-gray-900">Danh bạ</h2>
               <span className="bg-indigo-50 text-[#5c40e8] text-xs font-bold px-2 py-0.5 rounded-full">
                 {friends.length}
               </span>
@@ -74,18 +109,36 @@ const HomePage = () => {
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => navigate('/chatpage')}
-                className="p-2 bg-gray-50 text-gray-600 hover:bg-gray-100 rounded-full"
-                title="Mở khung chat"
+                className="p-2 bg-gray-50 text-gray-600 hover:bg-[#eef0ff] hover:text-[#5c40e8] rounded-full transition-colors"
+                title="Mở đoạn chat"
               >
                 <Edit className="w-4 h-4" />
               </button>
               <button
                 onClick={signout}
-                className="p-2 bg-red-50 text-red-500 hover:bg-red-100 rounded-full"
+                className="p-2 bg-red-50 text-red-500 hover:bg-red-100 rounded-full transition-colors"
                 title="Đăng xuất"
               >
                 <LogOut className="w-4 h-4" />
               </button>
+            </div>
+          </div>
+
+          {/* ===== KHUNG HIỂN THỊ PROFILE CỦA BẠN ===== */}
+          <div 
+            onClick={() => setIsProfileModalOpen(true)}
+            className="flex items-center gap-3 p-3 mb-4 bg-[#f8f9fa] hover:bg-[#eef0ff] border border-gray-100 hover:border-[#d0d7ff] rounded-2xl cursor-pointer transition-all group"
+          >
+            <div className="relative">
+              <Avatar user={authUser} size="w-12 h-12" />
+              <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 border-2 border-white rounded-full"></div>
+            </div>
+            <div className="flex-1 min-w-0">
+              <h4 className="text-sm font-bold text-gray-900 truncate group-hover:text-[#5c40e8] transition-colors">{authUser?.name}</h4>
+              <p className="text-xs text-gray-500 truncate">Hồ sơ cá nhân</p>
+            </div>
+            <div className="p-2 bg-white rounded-full text-gray-400 group-hover:text-[#5c40e8] shadow-sm transition-colors">
+              <Settings className="w-4 h-4" />
             </div>
           </div>
 
@@ -99,8 +152,8 @@ const HomePage = () => {
             />
           </div>
 
-          <div className="flex items-center gap-3 bg-indigo-50 p-3 rounded-xl">
-            <div className="bg-[#5c40e8] p-2 rounded-lg">
+          <div className="flex items-center gap-3 bg-indigo-50 p-3 rounded-xl border border-indigo-100/50">
+            <div className="bg-[#5c40e8] p-2 rounded-lg shadow-sm">
               <UserPlus className="w-5 h-5 text-white" />
             </div>
             <div className="flex-1">
@@ -108,7 +161,7 @@ const HomePage = () => {
               <p className="text-xs text-gray-500">Tìm kiếm qua Email hoặc tên</p>
             </div>
             {requests.length > 0 && (
-              <span className="bg-[#5c40e8] text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+              <span className="bg-[#5c40e8] text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm">
                 {requests.length} chờ
               </span>
             )}
@@ -180,21 +233,21 @@ const HomePage = () => {
                   setQuery(e.target.value);
                   if (!e.target.value) clearSearch();
                 }}
-                className="w-full pl-9 pr-3 py-2.5 bg-[#f4f5f7] rounded-xl text-sm outline-none"
+                className="w-full pl-9 pr-3 py-2.5 bg-[#f4f5f7] rounded-xl text-sm outline-none focus:ring-2 focus:ring-[#5c40e8]/20"
                 placeholder="Nhập Email hoặc tên..."
               />
             </div>
             <button
               type="submit"
               disabled={isSearching}
-              className="bg-[#5c40e8] hover:bg-[#4a32c3] disabled:bg-[#a696eb] text-white text-sm font-semibold px-4 rounded-xl"
+              className="bg-[#5c40e8] hover:bg-[#4a32c3] disabled:bg-[#a696eb] text-white text-sm font-semibold px-4 rounded-xl transition-colors"
             >
               {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Tìm kiếm'}
             </button>
           </form>
 
           {query && !isSearching && searchResults.length === 0 && (
-            <p className="text-xs text-gray-400 mb-4">Chưa có kết quả. Hãy bấm "Tìm kiếm".</p>
+            <p className="text-xs text-gray-400 mb-4 text-center">Chưa có kết quả. Hãy thử từ khóa khác.</p>
           )}
           {searchResults.length > 0 && (
             <div className="space-y-2 mb-6">
@@ -207,7 +260,7 @@ const HomePage = () => {
                   </div>
                   <button
                     onClick={() => sendRequest(u._id)}
-                    className="bg-indigo-50 hover:bg-indigo-100 text-[#5c40e8] text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
+                    className="bg-indigo-50 hover:bg-indigo-100 text-[#5c40e8] text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"
                   >
                     <UserPlus className="w-3.5 h-3.5" /> Kết bạn
                   </button>
@@ -218,7 +271,7 @@ const HomePage = () => {
 
           {/* Lời mời đang chờ */}
           <div className="flex items-center justify-between mb-3">
-            <h4 className="text-sm font-bold text-gray-900">
+            <h4 className="text-sm font-bold text-gray-900 flex items-center">
               Lời mời đang chờ
               {requests.length > 0 && (
                 <span className="ml-2 bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">
@@ -243,13 +296,13 @@ const HomePage = () => {
                   <div className="flex gap-2">
                     <button
                       onClick={() => acceptRequest(r._id)}
-                      className="flex-1 bg-[#5c40e8] hover:bg-[#4a32c3] text-white text-sm font-semibold py-2 rounded-lg flex items-center justify-center gap-1"
+                      className="flex-1 bg-[#5c40e8] hover:bg-[#4a32c3] text-white text-sm font-semibold py-2 rounded-lg flex items-center justify-center gap-1 transition-colors"
                     >
                       <Check className="w-4 h-4" /> Chấp nhận
                     </button>
                     <button
                       onClick={() => rejectRequest(r._id)}
-                      className="bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-semibold px-4 rounded-lg"
+                      className="bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-semibold px-4 rounded-lg transition-colors"
                     >
                       Từ chối
                     </button>
@@ -274,7 +327,7 @@ const HomePage = () => {
                   </div>
                   <button
                     onClick={() => sendRequest(s._id)}
-                    className="bg-indigo-50 hover:bg-indigo-100 text-[#5c40e8] text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1"
+                    className="bg-indigo-50 hover:bg-indigo-100 text-[#5c40e8] text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors"
                   >
                     <UserPlus className="w-3.5 h-3.5" /> Kết bạn
                   </button>
@@ -289,13 +342,114 @@ const HomePage = () => {
             <p className="text-xs text-gray-600 mb-3 break-all">{authUser?._id}</p>
             <button
               onClick={handleCopyId}
-              className="w-full bg-white text-gray-700 text-sm font-semibold py-2 rounded-lg flex items-center justify-center gap-1.5"
+              className="w-full bg-white text-gray-700 hover:bg-gray-50 transition-colors text-sm font-semibold py-2 rounded-lg flex items-center justify-center gap-1.5"
             >
               <Copy className="w-4 h-4" /> {copied ? 'Đã sao chép!' : 'Sao chép ID'}
             </button>
           </div>
         </div>
       </div>
+
+      {/* ================= MODAL CẬP NHẬT HỒ SƠ ================= */}
+      {isProfileModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4">
+          <div className="bg-white rounded-3xl w-full max-w-md shadow-2xl flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between p-5 border-b border-gray-100 shrink-0">
+              <h2 className="text-lg font-bold text-gray-900">Chỉnh sửa hồ sơ</h2>
+              <button 
+                onClick={() => setIsProfileModalOpen(false)} 
+                className="p-2 text-gray-400 hover:bg-gray-100 rounded-full transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateProfile} className="p-6 overflow-y-auto custom-scrollbar">
+              <div className="flex flex-col items-center mb-6">
+                <div className="relative">
+                  <img
+                    src={previewImg || "/avatar.png"} // fallback nếu không có ảnh
+                    alt="Profile"
+                    className="w-24 h-24 rounded-full object-cover border-4 border-indigo-50 shadow-sm"
+                  />
+                  <label
+                    htmlFor="avatar-upload"
+                    className={`absolute bottom-0 right-0 bg-[#5c40e8] hover:scale-105 p-2 rounded-full cursor-pointer transition-all ${isUpdatingProfile ? "animate-pulse pointer-events-none" : ""}`}
+                  >
+                    <Camera className="w-4 h-4 text-white" />
+                    <input
+                      type="file"
+                      id="avatar-upload"
+                      className="hidden"
+                      accept="image/*"
+                      onChange={handleImgChange}
+                      disabled={isUpdatingProfile}
+                    />
+                  </label>
+                </div>
+                <p className="text-xs text-gray-400 mt-3">Định dạng JPG, PNG. Tối đa 3MB</p>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Email</label>
+                  <div className="relative">
+                    <AtSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <input
+                      type="text"
+                      value={authUser?.email || ""}
+                      disabled
+                      className="w-full pl-10 pr-4 py-2.5 bg-gray-100 border border-transparent rounded-xl text-sm text-gray-500 cursor-not-allowed"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Tên hiển thị</label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <input
+                      type="text"
+                      value={profileData.name}
+                      onChange={(e) => setProfileData({ ...profileData, name: e.target.value })}
+                      disabled={isUpdatingProfile}
+                      className="w-full pl-10 pr-4 py-2.5 bg-[#f4f5f7] border border-transparent focus:border-[#5c40e8] focus:bg-white rounded-xl text-sm text-gray-900 outline-none transition-all"
+                      placeholder="Nhập tên mới..."
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Mật khẩu mới (Tùy chọn)</label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <input
+                      type="password"
+                      value={profileData.password}
+                      onChange={(e) => setProfileData({ ...profileData, password: e.target.value })}
+                      disabled={isUpdatingProfile}
+                      className="w-full pl-10 pr-4 py-2.5 bg-[#f4f5f7] border border-transparent focus:border-[#5c40e8] focus:bg-white rounded-xl text-sm text-gray-900 outline-none transition-all"
+                      placeholder="Bỏ trống nếu không đổi..."
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isUpdatingProfile || (!profileData.password && profileData.name === authUser.name && previewImg === authUser.profilePic)}
+                className="w-full mt-8 bg-[#5c40e8] hover:bg-[#4a32c3] disabled:bg-[#a696eb] disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-sm"
+              >
+                {isUpdatingProfile ? (
+                  <><Loader2 className="w-5 h-5 animate-spin" /> Đang lưu...</>
+                ) : (
+                  "Lưu thay đổi"
+                )}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

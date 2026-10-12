@@ -18,6 +18,7 @@ export const useAuthStore = create((set, get) => ({
   isVerifyingOTP: false,
   socket: null,
   myPrivateKey: null,
+  isUpdatingProfile: false,
 
   // Các biến tạm để lưu trữ chờ xác minh OTP
   pendingUserId: null,
@@ -48,6 +49,21 @@ export const useAuthStore = create((set, get) => ({
     }
   },
 
+  updateProfile: async (data) => {
+    set({ isUpdatingProfile: true });
+    try {
+      const res = await axiosInstance.put("/auth/update-profile", data);
+      set({ authUser: res.data.data }); // Cập nhật lại thông tin hiển thị ngay lập tức
+      toast.success("Cập nhật hồ sơ thành công!");
+      return true;
+    } catch (error) {
+      toast.error(error.response?.data?.message || "Lỗi cập nhật hồ sơ");
+      return false;
+    } finally {
+      set({ isUpdatingProfile: false });
+    }
+  },
+
   checkAuth: async () => {
     try {
       const res = await axiosInstance.get("/auth/check");
@@ -58,6 +74,7 @@ export const useAuthStore = create((set, get) => ({
         set({ myPrivateKey: privKey });
       }
       get().connectSocket();
+      // eslint-disable-next-line no-unused-vars
     } catch (error) {
       set({ authUser: null });
     } finally {

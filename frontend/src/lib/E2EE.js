@@ -1,13 +1,4 @@
-/**
- * ==============================================================================
- * ------------------------------------------------------------------------------
- * Ứng dụng sử dụng mô hình Mã hóa lai (Hybrid Encryption) kết hợp 3 thuật toán:
- * 1. AES : Mã hóa đối xứng, tốc độ cực nhanh -> Dùng để mã hóa dữ liệu thực tế (Tin nhắn, File).
- * 2. RSA : Mã hóa bất đối xứng, độ bảo mật cao -> Dùng để trao đổi/gửi chiếc "Khóa AES" một cách an toàn.
- * 3. SHA : Hàm băm một chiều -> Kết hợp với RSA để tạo Chữ ký điện tử, kiểm tra tính toàn vẹn và chống giả mạo.
- * ==============================================================================
- */
-
+/* eslint-disable no-unused-vars */
 // Chuyển đổi qua lại giữa ArrayBuffer (Nhị phân) và Base64 (Chuỗi để lưu DB)
 export const buf2base64 = (buf) => {
   const bytes = new Uint8Array(buf);
@@ -30,15 +21,12 @@ export const base642buf = (b64) => {
 
 export const E2EE = {
   // ==========================================
-  // PHẦN 1: RSA - THUẬT TOÁN BẤT ĐỐI XỨNG (ASYMMETRIC)
-  // Mỗi user có 1 cặp khóa. Public Key công khai cho mọi người để "khóa" tin nhắn. Private Key giấu kín để "mở khóa".
+  // 1. RSA: TẠO KHÓA BẤT ĐỐI XỨNG
   // ==========================================
-
-  // Hàm tạo cặp khóa RSA 2048-bit khi user đăng ký tài khoản
   generateRSAKeyPair: async () => {
     return await window.crypto.subtle.generateKey(
       {
-        name: "RSA-OAEP", // OAEP là chuẩn padding an toàn chống lại các cuộc tấn công bản rõ
+        name: "RSA-OAEP",
         modulusLength: 2048,
         publicExponent: new Uint8Array([1, 0, 1]),
         hash: "SHA-256",
@@ -47,14 +35,10 @@ export const E2EE = {
       ["encrypt", "decrypt"],
     );
   },
-
-  // Chuyển đổi Public Key ra Base64 để gửi lên Database
   exportPublicKey: async (publicKey) => {
     const exported = await window.crypto.subtle.exportKey("spki", publicKey);
     return buf2base64(exported);
   },
-
-  // Đọc Public Key từ Database để sử dụng
   importPublicKey: async (base64Key) => {
     return await window.crypto.subtle.importKey(
       "spki",
@@ -64,14 +48,10 @@ export const E2EE = {
       ["encrypt"],
     );
   },
-
-  // Chuyển đổi Private Key ra Base64 để lưu vào localStorage của trình duyệt
   exportPrivateKey: async (privateKey) => {
     const exported = await window.crypto.subtle.exportKey("pkcs8", privateKey);
     return buf2base64(exported);
   },
-
-  // Đọc Private Key từ localStorage để giải mã
   importPrivateKey: async (base64Key) => {
     return await window.crypto.subtle.importKey(
       "pkcs8",
@@ -83,8 +63,7 @@ export const E2EE = {
   },
 
   // ==========================================
-  // PHẦN 2: SHA-256 - HÀM BĂM (HASH FUNCTION)
-  //  SHA biến đổi mọi nội dung thành 1 chuỗi 256-bit duy nhất (fingerprint). Bất kỳ thay đổi nhỏ nào ở dữ liệu gốc cũng làm chuỗi này thay đổi hoàn toàn.
+  // 2. SHA-256: HÀM BĂM KIỂM TRA TOÀN VẸN
   // ==========================================
   hashSHA256: async (text) => {
     const encoded = new TextEncoder().encode(text);
@@ -93,16 +72,14 @@ export const E2EE = {
   },
 
   // ==========================================
-  // PHẦN 3: CHỮ KÝ ĐIỆN TỬ (DIGITAL SIGNATURE) = SHA-256 + RSA
-  //  Đảo ngược logic của RSA. Người gửi dùng Private Key của mình để KÝ, người nhận dùng Public Key của người gửi để KIỂM TRA. Giúp chống giả mạo danh tính.
+  // 3. CHỮ KÝ SỐ (RSASSA-PKCS1-v1_5)
   // ==========================================
-
-  // Hàm tạo chữ ký số
   signMessage: async (plainText, myPrivateKeyBase64) => {
+    // Ép trình duyệt đọc Private Key dưới định dạng Ký số
     const privKey = await window.crypto.subtle.importKey(
       "pkcs8",
       base642buf(myPrivateKeyBase64),
-      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, // Thuật toán ký số chuyên dụng của RSA
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
       true,
       ["sign"],
     );
@@ -112,15 +89,15 @@ export const E2EE = {
       privKey,
       encoded,
     );
-    return buf2base64(signatureBuffer); // Trả về con dấu điện tử
+    return buf2base64(signatureBuffer);
   },
 
-  // Hàm kiểm tra chữ ký số
   verifySignature: async (
     plainText,
     signatureBase64,
     senderPublicKeyBase64,
   ) => {
+    // Ép trình duyệt đọc Public Key dưới định dạng Xác thực ký số
     const pubKey = await window.crypto.subtle.importKey(
       "spki",
       base642buf(senderPublicKeyBase64),
@@ -138,8 +115,7 @@ export const E2EE = {
   },
 
   // ==========================================
-  // PHẦN 4: LUỒNG MÃ HÓA TIN NHẮN (HYBRID ENCRYPTION)
-  //  Đây là cốt lõi của hệ thống, giải quyết bài toán "RSA quá chậm để mã hóa dữ liệu lớn".
+  // 4. QUY TRÌNH GỬI
   // ==========================================
   encryptMessage: async (
     plainText,
@@ -147,21 +123,21 @@ export const E2EE = {
     myPublicKeyBase64,
     myPrivateKeyBase64,
   ) => {
-    // Bước 1 (Tính Xác Thực): Tạo chữ ký số cho nội dung để chứng minh người gửi
+    //Ký số nội dung bằng Private Key của người gửi
     const digitalSignature = await E2EE.signMessage(
       plainText,
       myPrivateKeyBase64,
     );
 
-    // Bước 2 (AES): Sinh ra 1 khóa AES dùng một lần (Session Key) cho tin nhắn này.
+    //Sinh khóa phiên AES
     const aesKey = await window.crypto.subtle.generateKey(
-      { name: "AES-GCM", length: 256 }, // Dùng AES-GCM 256-bit rất mạnh và nhanh
+      { name: "AES-GCM", length: 256 },
       true,
       ["encrypt", "decrypt"],
     );
 
-    // Bước 3 (AES): Dùng khóa AES vừa tạo để mã hóa nội dung tin nhắn
-    const iv = window.crypto.getRandomValues(new Uint8Array(12)); // Vector khởi tạo giúp cùng 1 nội dung mã hóa ra kết quả khác nhau
+    //Mã hóa nội dung tin nhắn bằng khóa phiên AES
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
     const encodedText = new TextEncoder().encode(plainText);
     const cipherBuffer = await window.crypto.subtle.encrypt(
       { name: "AES-GCM", iv: iv },
@@ -169,8 +145,7 @@ export const E2EE = {
       encodedText,
     );
 
-    // Bước 4 (RSA): Dùng Public Key của người nhận để khóa chặt chiếc "Khóa AES" lại.
-    // Chỉ người nhận có Private Key mới mở được ổ khóa này để lấy khóa AES bên trong.
+    //Lấy khóa public người nhận để mã hóa khóa phiên
     const rawAesKey = await window.crypto.subtle.exportKey("raw", aesKey);
     const receiverPubKey = await E2EE.importPublicKey(receiverPublicKeyBase64);
     const encryptedAesBuffer = await window.crypto.subtle.encrypt(
@@ -179,7 +154,7 @@ export const E2EE = {
       rawAesKey,
     );
 
-    // Bước 5: Khóa chiếc khóa AES bằng chính Public Key của mình để mình cũng có thể xem lại tin nhắn đã gửi.
+    //Lấy chính public key của người gửi để mã hóa khóa phiên
     let senderEncryptedAesBuffer = null;
     if (myPublicKeyBase64) {
       const myPubKey = await E2EE.importPublicKey(myPublicKeyBase64);
@@ -190,21 +165,20 @@ export const E2EE = {
       );
     }
 
-    // Trả về gói hàng đã mã hóa hoàn toàn
+    //Đóng gói và gửi cho người nhận
     return {
-      text: buf2base64(cipherBuffer), // Dữ liệu bị băm nát bởi AES
-      encryptedAesKey: buf2base64(encryptedAesBuffer), // Chìa khóa AES bị khóa bởi RSA người nhận
-      senderEncryptedAesKey: senderEncryptedAesBuffer
+      text: buf2base64(cipherBuffer), //Tin nhắn đã mã hóa
+      encryptedAesKey: buf2base64(encryptedAesBuffer), //Khóa phiên đã mã hóa
+      senderEncryptedAesKey: senderEncryptedAesBuffer //Khóa phiên được mã hóa bằng chính public key của mình
         ? buf2base64(senderEncryptedAesBuffer)
         : "",
       iv: buf2base64(iv),
-      shaHash: digitalSignature, // Con dấu chống giả mạo
+      shaHash: digitalSignature, // Cất Chữ ký số vào trường shaHash
     };
   },
 
   // ==========================================
-  // PHẦN 5: LUỒNG GIẢI MÃ TIN NHẮN
-  //  Quy trình ngược lại hoàn toàn với lúc gửi.
+  // 5. QUY TRÌNH NHẬN
   // ==========================================
   decryptMessage: async (
     encryptedPayload,
@@ -214,15 +188,15 @@ export const E2EE = {
     try {
       if (!encryptedPayload.encryptedAesKey) return encryptedPayload.text;
 
-      // Bước 1 (RSA): Dùng Private Key của mình để giải mã lấy lại chiếc "Khóa AES"
+      //Giải mã khóa AES bằng khóa private của người nhận
       const decryptedAesRaw = await window.crypto.subtle.decrypt(
+        //Khóa AES còn là dạng byte (thô)
         { name: "RSA-OAEP" },
         myPrivateKey,
         base642buf(encryptedPayload.encryptedAesKey),
       );
-
-      // Định hình lại khóa AES từ chuỗi byte thô
       const aesKey = await window.crypto.subtle.importKey(
+        //Đúc lại thành khóa AES hoàn chỉnh
         "raw",
         decryptedAesRaw,
         { name: "AES-GCM" },
@@ -230,15 +204,15 @@ export const E2EE = {
         ["encrypt", "decrypt"],
       );
 
-      // Bước 2 (AES): Dùng khóa AES đã lấy lại được để giải mã nội dung tin nhắn
+      //Dùng khóa AES vừa giải mã được để giải mã phần nội dung tin nhắn
       const decryptedBuffer = await window.crypto.subtle.decrypt(
         { name: "AES-GCM", iv: base642buf(encryptedPayload.iv) },
         aesKey,
         base642buf(encryptedPayload.text),
       );
-      const plainText = new TextDecoder().decode(decryptedBuffer); // Có được văn bản gốc!
+      const plainText = new TextDecoder().decode(decryptedBuffer);
 
-      // Bước 3 (Xác thực): Quét chữ ký số bằng Public Key của người gửi để đảm bảo hacker không sửa đổi tin nhắn giữa đường
+      //Xác thực Chữ ký số bằng Public Key của người gửi
       if (senderPublicKeyBase64 && encryptedPayload.shaHash) {
         try {
           const isValidSignature = await E2EE.verifySignature(
@@ -261,16 +235,15 @@ export const E2EE = {
   },
 
   // ==========================================
-  // PHẦN 6 & 7: MÃ HÓA/GIẢI MÃ FILE
-  //  Tương tự như tin nhắn, nhưng AES đặc biệt phát huy sức mạnh ở đây vì nó có thể mã hóa file hàng MB trong chớp mắt, điều mà RSA không thể làm được.
+  // 6. QUY TRÌNH GỬI FILE (ĐA PHƯƠNG TIỆN)
   // ==========================================
   encryptFile: async (
-    fileBuffer,
+    fileBuffer, // Dữ liệu nhị phân của file (ArrayBuffer)
     receiverPublicKeyBase64,
     myPublicKeyBase64,
     myPrivateKeyBase64,
   ) => {
-    // 1. Ký số file gốc (SHA + RSA)
+    // 1. Ký số nội dung file gốc để đảm bảo tính toàn vẹn
     const privKey = await window.crypto.subtle.importKey(
       "pkcs8",
       base642buf(myPrivateKeyBase64),
@@ -284,14 +257,14 @@ export const E2EE = {
       fileBuffer,
     );
 
-    // 2. Sinh khóa phiên AES cho file
+    // 2. Sinh khóa phiên AES (Khóa cực mạnh, tốc độ cao để mã hóa file nặng)
     const aesKey = await window.crypto.subtle.generateKey(
       { name: "AES-GCM", length: 256 },
       true,
       ["encrypt", "decrypt"],
     );
 
-    // 3. Mã hóa toàn bộ dữ liệu file bằng AES (Tốc độ cao)
+    // 3. Mã hóa toàn bộ dữ liệu file bằng AES
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
     const cipherBuffer = await window.crypto.subtle.encrypt(
       { name: "AES-GCM", iv: iv },
@@ -299,7 +272,7 @@ export const E2EE = {
       fileBuffer,
     );
 
-    // 4. Khóa chiếc khóa AES lại bằng RSA của người nhận
+    // 4. Mã hóa chiếc khóa AES bằng RSA của người nhận
     const rawAesKey = await window.crypto.subtle.exportKey("raw", aesKey);
     const receiverPubKey = await E2EE.importPublicKey(receiverPublicKeyBase64);
     const encryptedAesBuffer = await window.crypto.subtle.encrypt(
@@ -308,7 +281,7 @@ export const E2EE = {
       rawAesKey,
     );
 
-    // 5. Khóa chiếc khóa AES lại bằng RSA của chính mình
+    // 5. Mã hóa chiếc khóa AES bằng RSA của chính mình (để mình cũng xem lại được file)
     let senderEncryptedAesBuffer = null;
     if (myPublicKeyBase64) {
       const myPubKey = await E2EE.importPublicKey(myPublicKeyBase64);
@@ -319,21 +292,23 @@ export const E2EE = {
       );
     }
 
+    // Đóng gói và trả về định dạng Base64 để Frontend gửi lên Backend (Cloudinary/DB)
     return {
-      fileBase64: buf2base64(cipherBuffer),
+      fileBase64: buf2base64(cipherBuffer), // File đã biến thành 1 chuỗi ký tự vô nghĩa
       encryptedAesKey: buf2base64(encryptedAesBuffer),
       senderEncryptedAesKey: senderEncryptedAesBuffer
         ? buf2base64(senderEncryptedAesBuffer)
         : "",
       iv: buf2base64(iv),
-      shaHash: buf2base64(signatureBuffer),
+      shaHash: buf2base64(signatureBuffer), // Chữ ký chống giả mạo
     };
   },
 
-  //Giải mã file
-
+  // ==========================================
+  // 7. QUY TRÌNH NHẬN FILE (ĐA PHƯƠNG TIỆN)
+  // ==========================================
   decryptFile: async (
-    encryptedPayload,
+    encryptedPayload, // Object payload từ server trả về { fileBase64, encryptedAesKey, iv, shaHash }
     myPrivateKey,
     senderPublicKeyBase64,
   ) => {
@@ -341,7 +316,7 @@ export const E2EE = {
       if (!encryptedPayload.encryptedAesKey || !encryptedPayload.fileBase64)
         return null;
 
-      // 1. Dùng RSA Private lấy lại khóa AES
+      // 1. Dùng khóa RSA Private của mình để mở khóa lấy lại khóa AES
       const decryptedAesRaw = await window.crypto.subtle.decrypt(
         { name: "RSA-OAEP" },
         myPrivateKey,
@@ -355,14 +330,14 @@ export const E2EE = {
         ["encrypt", "decrypt"],
       );
 
-      // 2. Dùng khóa AES mở khóa File nhị phân
+      // 2. Dùng khóa AES vừa giải mã để mở khóa File
       const decryptedBuffer = await window.crypto.subtle.decrypt(
         { name: "AES-GCM", iv: base642buf(encryptedPayload.iv) },
         aesKey,
         base642buf(encryptedPayload.fileBase64),
       );
 
-      // 3. Quét Chữ ký số chống sửa đổi
+      // 3. Quét Chữ ký số để xác nhận file không bị hacker chèn mã độc trên đường truyền
       if (senderPublicKeyBase64 && encryptedPayload.shaHash) {
         try {
           const pubKey = await window.crypto.subtle.importKey(
@@ -382,7 +357,7 @@ export const E2EE = {
             console.error(
               "[E2EE] CẢNH BÁO: Chữ ký số bị sai! File có thể đã bị sửa đổi.",
             );
-            return null;
+            return null; // Từ chối mở file
           }
         } catch (e) {
           console.error("[E2EE] Lỗi quét chữ ký số", e);
@@ -390,48 +365,50 @@ export const E2EE = {
         }
       }
 
+      // 4. Trả về ArrayBuffer nguyên thủy của file để Frontend hiển thị ra màn hình hoặc tải xuống
       return decryptedBuffer;
     } catch (error) {
       console.error("[E2EE] Lỗi giải mã file:", error);
       return null;
     }
   },
-
   // ==========================================
-  // PHẦN 8 & 9: XỬ LÝ ĐA NHẬN (GROUP CHAT)
-  // Thay vì mã hóa file N lần cho N người (rất tốn tài nguyên), ta chỉ mã hóa file 1 lần bằng 1 khóa AES chung. Sau đó copy khóa AES thành N bản, và khóa từng bản bằng RSA Public Key của từng người.
+  // 8. QUY TRÌNH GỬI TIN NHẮN NHÓM (MULTI-RECIPIENT)
   // ==========================================
   encryptMessageForGroup: async (
     plainText,
-    participants,
+    participants, // Mảng chứa thông tin các thành viên: [{ _id, publicKey }, ...]
     myPrivateKeyBase64,
   ) => {
+    // 1. Ký số để chứng minh mình là người gửi
     const digitalSignature = await E2EE.signMessage(
       plainText,
       myPrivateKeyBase64,
     );
 
-    // 1. Tạo MỘT khóa AES duy nhất cho cả nhóm
+    // 2. Sinh MỘT khóa phiên AES chung cho cả nhóm
     const aesKey = await window.crypto.subtle.generateKey(
       { name: "AES-GCM", length: 256 },
       true,
       ["encrypt", "decrypt"],
     );
+
+    // 3. Mã hóa nội dung tin nhắn bằng khóa AES chung này
     const iv = window.crypto.getRandomValues(new Uint8Array(12));
     const encodedText = new TextEncoder().encode(plainText);
-
-    // 2. Chỉ mã hóa nội dung tin nhắn đúng 1 lần (Tiết kiệm CPU)
     const cipherBuffer = await window.crypto.subtle.encrypt(
       { name: "AES-GCM", iv: iv },
       aesKey,
       encodedText,
     );
-    const rawAesKey = await window.crypto.subtle.exportKey("raw", aesKey);
-    const groupEncryptedKeys = {}; // Danh sách ổ khóa của từng người
 
-    // 3. Dùng RSA của từng thành viên khóa cái AES Key chung này lại
+    // 4. Lặp qua tất cả thành viên, dùng Public Key của từng người để bọc cái khóa AES lại
+    const rawAesKey = await window.crypto.subtle.exportKey("raw", aesKey);
+    const groupEncryptedKeys = {}; // Lưu trữ dạng: { "userId": "aes_key_da_ma_hoa" }
+
     for (const user of participants) {
-      if (!user.publicKey) continue;
+      if (!user.publicKey) continue; // Bỏ qua nếu user chưa tạo khóa
+
       try {
         const userPubKey = await E2EE.importPublicKey(user.publicKey);
         const encryptedAesBuffer = await window.crypto.subtle.encrypt(
@@ -439,7 +416,7 @@ export const E2EE = {
           userPubKey,
           rawAesKey,
         );
-        groupEncryptedKeys[user._id] = buf2base64(encryptedAesBuffer); // Gắn tên ID người nhận vào ổ khóa tương ứng
+        groupEncryptedKeys[user._id] = buf2base64(encryptedAesBuffer);
       } catch (err) {
         console.error(`Lỗi mã hóa khóa cho user ${user._id}`, err);
       }
@@ -447,13 +424,17 @@ export const E2EE = {
 
     return {
       text: buf2base64(cipherBuffer),
-      groupEncryptedKeys, // Backend sẽ phát đúng ổ khóa cho đúng người
+      groupEncryptedKeys, // Map khóa của nhóm
       iv: buf2base64(iv),
       shaHash: digitalSignature,
     };
   },
 
+  // ==========================================
+  // 9. QUY TRÌNH GỬI FILE NHÓM (MULTI-RECIPIENT)
+  // ==========================================
   encryptFileForGroup: async (fileBuffer, participants, myPrivateKeyBase64) => {
+    // 1. Ký số file gốc
     const privKey = await window.crypto.subtle.importKey(
       "pkcs8",
       base642buf(myPrivateKeyBase64),
@@ -467,25 +448,25 @@ export const E2EE = {
       fileBuffer,
     );
 
-    // 1. Tạo MỘT khóa AES duy nhất cho File nhóm
+    // 2. Sinh MỘT khóa AES cho file
     const aesKey = await window.crypto.subtle.generateKey(
       { name: "AES-GCM", length: 256 },
       true,
       ["encrypt", "decrypt"],
     );
-    const iv = window.crypto.getRandomValues(new Uint8Array(12));
 
-    // 2. Chỉ mã hóa File đúng 1 lần
+    // 3. Mã hóa toàn bộ file bằng AES (tốc độ cao)
+    const iv = window.crypto.getRandomValues(new Uint8Array(12));
     const cipherBuffer = await window.crypto.subtle.encrypt(
       { name: "AES-GCM", iv: iv },
       aesKey,
       fileBuffer,
     );
 
+    // 4. Mã hóa khóa AES cho từng thành viên
     const rawAesKey = await window.crypto.subtle.exportKey("raw", aesKey);
     const groupEncryptedKeys = {};
 
-    // 3. Khóa AES Key bằng RSA của từng thành viên
     for (const user of participants) {
       if (!user.publicKey) continue;
       try {

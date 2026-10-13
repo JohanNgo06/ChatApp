@@ -2,23 +2,13 @@ import { Server } from "socket.io";
 import http from "http";
 import express from "express";
 import Message from "../model/messageModel.js";
-import { ENV } from "./env.js"; // IMPORT ENV ĐỂ LẤY CLIENT_URL
 
 const app = express();
 const server = http.createServer(app);
-
-// CẤU HÌNH CORS CHO SOCKET.IO
-// Chấp nhận localhost khi Dev và CLIENT_URL (Vercel) khi đưa lên mạng
-const allowedOrigins = ["http://localhost:5173"];
-if (ENV.CLIENT_URL) {
-  allowedOrigins.push(ENV.CLIENT_URL);
-}
-
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: ["http://localhost:5173"], // Domain frontend của bạn
     methods: ["GET", "POST"],
-    credentials: true, // Quan trọng để gửi kèm cookie/token
   },
 });
 

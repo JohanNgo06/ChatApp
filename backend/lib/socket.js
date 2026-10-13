@@ -8,7 +8,10 @@ const app = express();
 const server = http.createServer(app);
 
 // CẤU HÌNH CORS CHO SOCKET.IO
-const allowedOrigins = ["http://localhost:5173"];
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://chat-app-beta-beryl-36.vercel.app",
+];
 if (ENV.CLIENT_URL) {
   allowedOrigins.push(ENV.CLIENT_URL);
 }

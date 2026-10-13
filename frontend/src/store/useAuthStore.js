@@ -5,7 +5,9 @@ import { E2EE } from "../lib/E2EE.js";
 import toast from "react-hot-toast";
 
 const BASE_URL =
-  import.meta.env.MODE === "development" ? "http://localhost:5000" : "/";
+  import.meta.env.MODE === "development"
+    ? "http://localhost:5000"
+    : "https://whatsoup-backend.onrender.com";
 
 const keyName = (userId) => `chat-private-key-${userId}`;
 

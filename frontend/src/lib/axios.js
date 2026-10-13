@@ -4,7 +4,8 @@ export const axiosInstance = axios.create({
   baseURL:
     import.meta.env.MODE === "development"
       ? "http://localhost:5000/api"
-      : "/api",
+      : // THAY ĐƯỜNG LINK NÀY BẰNG LINK BACKEND RENDER CỦA BẠN:
+        "https://whatsoup-backend.onrender.com/api",
 });
 
 axiosInstance.interceptors.request.use(

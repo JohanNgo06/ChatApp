@@ -26,8 +26,9 @@ if (ENV.CLIENT_URL) {
 
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: "https://chat-app-beta-beryl-36.vercel.app",
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE"],
   }),
 );
 

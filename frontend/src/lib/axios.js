@@ -1,11 +1,9 @@
 import axios from "axios";
 
 export const axiosInstance = axios.create({
-  baseURL:
-    import.meta.env.MODE === "development"
-      ? "http://localhost:5000/api"
-      : // THAY ĐƯỜNG LINK NÀY BẰNG LINK BACKEND RENDER CỦA BẠN:
-        "https://whatsoup-backend.onrender.com/api",
+  // THAY THẾ bằng đúng URL Backend Render của bạn
+  baseURL: "https://whatsoup-backend.onrender.com/api",
+  withCredentials: true, // Quan trọng: Yêu cầu trình duyệt gửi kèm Cookie
 });
 
 axiosInstance.interceptors.request.use(

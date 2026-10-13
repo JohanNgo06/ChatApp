@@ -18,7 +18,7 @@ if (ENV.CLIENT_URL) {
 
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: "https://chat-app-beta-beryl-36.vercel.app",
     methods: ["GET", "POST"],
     credentials: true, // Quan trọng để gửi kèm cookie/token
   },

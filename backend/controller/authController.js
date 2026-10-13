@@ -38,8 +38,6 @@ export const verifyOTP = async (req, res, next) => {
     res.cookie("jwt", token, {
       maxAge: 7 * 24 * 60 * 60 * 1000,
       httpOnly: true,
-      sameSite: "none",
-      secure: true,
     });
 
     const userResponse = user.toObject();
@@ -184,12 +182,10 @@ export const signin = async (req, res, next) => {
       return res.status(404).json({ message: "Tài khoản không tồn tại" });
 
     if (!user.isVerified) {
-      return res
-        .status(401)
-        .json({
-          message:
-            "Tài khoản chưa được xác minh. Vui lòng đăng ký lại để nhận mã OTP.",
-        });
+      return res.status(401).json({
+        message:
+          "Tài khoản chưa được xác minh. Vui lòng đăng ký lại để nhận mã OTP.",
+      });
     }
 
     const comparePassword = await bcrypt.compare(password, user.password);

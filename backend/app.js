@@ -15,22 +15,20 @@ import cors from "cors";
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
-// CẤU HÌNH CORS CHO CÁC API EXPRESS (Trỏ về URL của Vercel)
-const allowedOrigins = [
-  "http://localhost:5173",
-  "https://chat-app-beta-beryl-36.vercel.app",
-];
-if (ENV.CLIENT_URL) {
-  allowedOrigins.push(ENV.CLIENT_URL);
-}
-
+// CẤU HÌNH CORS ĐỘNG - BYPASS MỌI ORIGIN
 app.use(
   cors({
-    origin: "https://chat-app-beta-beryl-36.vercel.app",
+    origin: function (origin, callback) {
+      callback(null, true);
+    },
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
   }),
 );
+
+// Bắt buộc có dòng này để xử lý Preflight Request của trình duyệt
+app.options("*", cors());
 
 app.use("/api/auth", authRoute);
 app.use("/api/messages", messageRoute);

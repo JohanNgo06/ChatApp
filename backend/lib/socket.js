@@ -2,25 +2,19 @@ import { Server } from "socket.io";
 import http from "http";
 import express from "express";
 import Message from "../model/messageModel.js";
-import { ENV } from "./env.js"; // Đảm bảo import ENV
+import { ENV } from "./env.js";
 
 const app = express();
 const server = http.createServer(app);
 
-// CẤU HÌNH CORS CHO SOCKET.IO
-const allowedOrigins = [
-  "http://localhost:5173",
-  "https://chat-app-beta-beryl-36.vercel.app",
-];
-if (ENV.CLIENT_URL) {
-  allowedOrigins.push(ENV.CLIENT_URL);
-}
-
+// CẤU HÌNH CORS ĐỘNG CHO SOCKET.IO (Bypass mọi origin, tương thích tuyệt đối với Vercel)
 const io = new Server(server, {
   cors: {
-    origin: "https://chat-app-beta-beryl-36.vercel.app",
-    methods: ["GET", "POST"],
-    credentials: true, // Quan trọng để gửi kèm cookie/token
+    origin: function (origin, callback) {
+      callback(null, true);
+    },
+    methods: ["GET", "POST", "OPTIONS"],
+    credentials: true, // Quan trọng để gửi kèm cookie/token qua WebSocket
   },
 });
 

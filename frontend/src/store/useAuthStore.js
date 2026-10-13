@@ -22,7 +22,6 @@ export const useAuthStore = create((set, get) => ({
   myPrivateKey: null,
   isUpdatingProfile: false,
 
-  // Các biến tạm để lưu trữ chờ xác minh OTP
   pendingUserId: null,
   pendingPrivateKeyBase64: null,
   pendingPrivateKey: null,
@@ -37,6 +36,7 @@ export const useAuthStore = create((set, get) => ({
       reconnection: true,
       reconnectionAttempts: 15,
       reconnectionDelay: 2000,
+      withCredentials: true, // BẮT BUỘC ĐỂ VƯỢT LỖI CORS SOCKET
     });
 
     socket.on("getOnlineUsers", (ids) => set({ onlineUsers: ids }));
@@ -55,7 +55,7 @@ export const useAuthStore = create((set, get) => ({
     set({ isUpdatingProfile: true });
     try {
       const res = await axiosInstance.put("/auth/update-profile", data);
-      set({ authUser: res.data.data }); // Cập nhật lại thông tin hiển thị ngay lập tức
+      set({ authUser: res.data.data });
       toast.success("Cập nhật hồ sơ thành công!");
       return true;
     } catch (error) {
@@ -87,29 +87,21 @@ export const useAuthStore = create((set, get) => ({
   signup: async (data) => {
     set({ isSigningUp: true });
     try {
-      // 1. Tạo khóa RSA
       const keyPair = await E2EE.generateRSAKeyPair();
       const pubKeyBase64 = await E2EE.exportPublicKey(keyPair.publicKey);
       const privKeyBase64 = await E2EE.exportPrivateKey(keyPair.privateKey);
 
       const payload = { ...data, publicKey: pubKeyBase64 };
 
-      // 2. Gọi API Đăng ký
       const res = await axiosInstance.post("/auth/signup", payload);
 
-      // ==========================================
-      // 3. KIỂM TRA CỜ BYPASS OTP TỪ BACKEND
-      // ==========================================
       if (res.data.requireOtp === false) {
-        // [TÀI KHOẢN TEST] - Đã Bypass OTP -> Thực hiện login luôn
         const user = res.data.user || res.data.data.user;
         const token = res.data.token || res.data.data?.token;
 
-        // Lưu Token và Khóa bí mật
         if (token) localStorage.setItem("chat-token", token);
         localStorage.setItem(keyName(user._id), privKeyBase64);
 
-        // Nạp vào State
         set({
           authUser: user,
           myPrivateKey: keyPair.privateKey,
@@ -123,7 +115,6 @@ export const useAuthStore = create((set, get) => ({
 
         return { success: true, requireOtp: false };
       } else {
-        // [TÀI KHOẢN THẬT] - Cần OTP -> Lưu tạm chờ xác minh
         set({
           pendingUserId: res.data.data.userId,
           pendingPrivateKeyBase64: privKeyBase64,
@@ -151,7 +142,6 @@ export const useAuthStore = create((set, get) => ({
       if (!pendingUserId)
         throw new Error("Không tìm thấy thông tin chờ xác minh.");
 
-      // 1. Gửi OTP lên server
       const res = await axiosInstance.post("/auth/verify-otp", {
         userId: pendingUserId,
         otp,
@@ -160,11 +150,9 @@ export const useAuthStore = create((set, get) => ({
       const user = res.data.data.user;
       const token = res.data.data.token;
 
-      // 2. Lưu token và Khóa bí mật (chỉ thực hiện khi đã verify thành công)
       localStorage.setItem("chat-token", token);
       localStorage.setItem(keyName(user._id), pendingPrivateKeyBase64);
 
-      // 3. Cập nhật State và xóa dữ liệu tạm
       set({
         authUser: user,
         myPrivateKey: pendingPrivateKey,

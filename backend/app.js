@@ -22,19 +22,17 @@ const allowedOrigins = [
 
 app.use(
   cors({
-    origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true, // Cho phép Vercel gửi Cookie
+    origin: [
+      "http://localhost:5173", // Dành cho lúc bạn chạy dev ở máy
+      "https://chat-app-three-tau-14.vercel.app", // Dành cho Vercel (Lấy chính xác từ ảnh bạn gửi, không có dấu / ở cuối)
+    ],
+    credentials: true, // Rất quan trọng để gửi được Cookie chứa JWT
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
   }),
 );
-// Bắt buộc có dòng này để xử lý Preflight Request của trình duyệt
+
+// Bắt buộc phải có dòng này để xử lý Preflight Request (OPTIONS) của trình duyệt
 app.options("*", cors());
 
 app.use("/api/auth", authRoute);

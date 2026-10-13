@@ -38,6 +38,8 @@ export const verifyOTP = async (req, res, next) => {
     res.cookie("jwt", token, {
       maxAge: 7 * 24 * 60 * 60 * 1000,
       httpOnly: true,
+      sameSite: "none",
+      secure: true,
     });
 
     const userResponse = user.toObject();

@@ -8,17 +8,17 @@ import nodemailer from "nodemailer";
 
 const transporter = nodemailer.createTransport({
   host: "smtp.gmail.com",
-  port: 465,
-  secure: true, // Bắt buộc dùng true với port 465
+  port: 587, // Đổi từ 465 sang 587
+  secure: false, // BẮT BUỘC ĐỔI THÀNH false khi dùng port 587 (Nodemailer sẽ tự động nâng cấp lên TLS)
   auth: {
     user: ENV.USER_EMAIL,
     pass: ENV.PASS_EMAIL,
   },
-  connectionTimeout: 10000, // Thêm: Timeout kết nối 10s
-  greetingTimeout: 10000, // Thêm: Timeout chờ phản hồi chào 10s
-  socketTimeout: 20000, // Thêm: Timeout socket 20s
+  // Tăng thời gian chờ lên 30 giây để bù trừ cho độ trễ của Render server
+  connectionTimeout: 30000,
+  greetingTimeout: 30000,
+  socketTimeout: 40000,
 });
-
 transporter.verify(function (error, success) {
   if (error) {
     console.error("Lỗi cấu hình gửi mail:", error);

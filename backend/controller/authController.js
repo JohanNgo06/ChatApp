@@ -7,7 +7,9 @@ import cloudinary from "../lib/cloudinary.js";
 import nodemailer from "nodemailer";
 
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true, // Bắt buộc dùng true với port 465
   auth: {
     user: ENV.USER_EMAIL,
     pass: ENV.PASS_EMAIL,
@@ -155,12 +157,10 @@ export const signup = async (req, res, next) => {
       console.error("Lỗi gửi email OTP:", mailError);
       // Nếu gửi mail lỗi, phải xóa user vừa tạo để họ còn đăng ký lại được
       await User.findByIdAndDelete(newUser._id);
-      return res
-        .status(500)
-        .json({
-          message:
-            "Không thể gửi email OTP. Vui lòng kiểm tra lại cấu hình Nodemailer.",
-        });
+      return res.status(500).json({
+        message:
+          "Không thể gửi email OTP. Vui lòng kiểm tra lại cấu hình Nodemailer.",
+      });
     }
 
     res.status(200).json({

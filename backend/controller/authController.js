@@ -65,8 +65,6 @@ export const verifyOTP = async (req, res, next) => {
 };
 
 export const signup = async (req, res, next) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
   try {
     const { name, email, password, publicKey } = req.body;
 
@@ -88,7 +86,6 @@ export const signup = async (req, res, next) => {
     const isExists = await User.findOne({ email });
 
     if (isExists) {
-      // FIX LỖI ĐĂNG KÝ LẠI: Nếu tài khoản tồn tại nhưng CHƯA xác minh -> Xóa đi cho phép đăng ký lại
       if (!isExists.isVerified) {
         await User.findByIdAndDelete(isExists._id);
       } else {
@@ -99,13 +96,9 @@ export const signup = async (req, res, next) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // ==========================================
-    // KIỂM TRA XEM CÓ PHẢI TÀI KHOẢN TEST KHÔNG
-    // ==========================================
     const isTestAccount =
       ENV.NODE_ENV !== "production" && TEST_EMAILS.includes(email);
 
-    // CHỈ TẠO OTP NẾU LÀ NGƯỜI DÙNG THẬT
     const otp = isTestAccount
       ? null
       : Math.floor(100000 + Math.random() * 900000).toString();
@@ -113,54 +106,34 @@ export const signup = async (req, res, next) => {
       ? null
       : new Date(Date.now() + 5 * 60 * 1000);
 
-    const newUser = await User.create(
-      [
-        {
-          name,
-          email,
-          password: hashedPassword,
-          publicKey: publicKey || "",
-          isVerified: isTestAccount, // Nếu là Test Account -> Xác minh luôn
-          otp: otp,
-          otpExpires: otpExpires,
-        },
-      ],
-      { session },
-    );
+    // BỎ TRANSACTION ĐI, TẠO TRỰC TIẾP LUÔN
+    const newUser = await User.create({
+      name,
+      email,
+      password: hashedPassword,
+      publicKey: publicKey || "",
+      isVerified: isTestAccount,
+      otp: otp,
+      otpExpires: otpExpires,
+    });
 
-    // ==========================================
-    // PHÂN NHÁNH: TÀI KHOẢN TEST vs TÀI KHOẢN THẬT
-    // ==========================================
     if (isTestAccount) {
-      // NẾU LÀ TÀI KHOẢN TEST: Không gửi email, cấp quyền luôn
-      await session.commitTransaction();
-      session.endSession();
-
-      console.log(`[TEST MODE]: Bỏ qua OTP cho tài khoản mới ${email}`);
-
-      // 1. TẠO TOKEN TẠI ĐÂY (Giống cách bạn làm ở hàm login/verifyOtp)
-      // Lưu ý: Nếu bạn có một hàm generateToken riêng (VD: import generateToken from '../lib/utils.js') thì hãy dùng nó.
-      // Còn nếu dùng trực tiếp thư viện jsonwebtoken, bạn có thể viết như sau:
-      const token = jwt.sign({ userId: newUser[0]._id }, ENV.JWT_SECRET, {
+      const token = jwt.sign({ userId: newUser._id }, ENV.JWT_SECRET, {
         expiresIn: "7d",
       });
-
-      // (Tùy chọn) Nếu ứng dụng của bạn lưu Token vào Cookie:
-      // res.cookie("jwt", token, { maxAge: 7 * 24 * 60 * 60 * 1000, httpOnly: true, sameSite: "strict" });
 
       return res.status(200).json({
         success: true,
         message: "Đăng ký thành công (Bypass OTP)",
         data: {
-          userId: newUser[0]._id,
-          token: token, // <--- QUAN TRỌNG: Trả về Token để Frontend lưu vào localStorage
+          userId: newUser._id,
+          token: token,
         },
-        user: newUser[0],
-        requireOtp: false, // Báo cho Frontend không cần hiện form nhập OTP
+        user: newUser,
+        requireOtp: false,
       });
     }
 
-    // NẾU LÀ TÀI KHOẢN THẬT: Gửi email bình thường
     const mailOptions = {
       from: `"WhatSoup App" <${ENV.USER_EMAIL}>`,
       to: email,
@@ -175,19 +148,29 @@ export const signup = async (req, res, next) => {
       `,
     };
 
-    await transporter.sendMail(mailOptions);
-    await session.commitTransaction();
-    session.endSession();
+    // THÊM TRY-CATCH CHO RIÊNG GỬI EMAIL
+    try {
+      await transporter.sendMail(mailOptions);
+    } catch (mailError) {
+      console.error("Lỗi gửi email OTP:", mailError);
+      // Nếu gửi mail lỗi, phải xóa user vừa tạo để họ còn đăng ký lại được
+      await User.findByIdAndDelete(newUser._id);
+      return res
+        .status(500)
+        .json({
+          message:
+            "Không thể gửi email OTP. Vui lòng kiểm tra lại cấu hình Nodemailer.",
+        });
+    }
 
     res.status(200).json({
       success: true,
       message: "Vui lòng kiểm tra email để lấy mã OTP",
-      data: { userId: newUser[0]._id },
-      requireOtp: true, // Báo cho Frontend mở form nhập OTP
+      data: { userId: newUser._id },
+      requireOtp: true,
     });
   } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
+    console.error("Lỗi sập hàm signup:", error);
     next(error);
   }
 };

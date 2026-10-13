@@ -4,7 +4,7 @@ export const axiosInstance = axios.create({
   baseURL:
     import.meta.env.MODE === "development"
       ? "http://localhost:5000/api"
-      : "https://whatsoup-backend.onrender.com/api",
+      : "https://whatsoup-backend-api.onrender.com/api",
   withCredentials: true, // Quan trọng: Yêu cầu trình duyệt gửi kèm Cookie
 });
 

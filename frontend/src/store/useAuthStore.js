@@ -7,7 +7,7 @@ import toast from "react-hot-toast";
 const BASE_URL =
   import.meta.env.MODE === "development"
     ? "http://localhost:5000"
-    : "https://whatsoup-backend.onrender.com";
+    : "https://whatsoup-backend-api.onrender.com";
 
 const keyName = (userId) => `chat-private-key-${userId}`;
 

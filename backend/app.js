@@ -15,13 +15,21 @@ import cors from "cors";
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
-// CẤU HÌNH CORS ĐỘNG - BYPASS MỌI ORIGIN
+const allowedOrigins = [
+  "http://localhost:5173", // Cho môi trường dev (Vite)
+  ENV.CLIENT_URL, // Domain Vercel của bạn (ví dụ: https://your-app.vercel.app)
+];
+
 app.use(
   cors({
     origin: function (origin, callback) {
-      callback(null, true);
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
     },
-    credentials: true,
+    credentials: true, // Quan trọng để gửi/nhận cookie
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
   }),

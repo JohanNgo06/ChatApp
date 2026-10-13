@@ -14,6 +14,17 @@ const transporter = nodemailer.createTransport({
     user: ENV.USER_EMAIL,
     pass: ENV.PASS_EMAIL,
   },
+  connectionTimeout: 10000, // Thêm: Timeout kết nối 10s
+  greetingTimeout: 10000, // Thêm: Timeout chờ phản hồi chào 10s
+  socketTimeout: 20000, // Thêm: Timeout socket 20s
+});
+
+transporter.verify(function (error, success) {
+  if (error) {
+    console.error("Lỗi cấu hình gửi mail:", error);
+  } else {
+    console.log("Server đã sẵn sàng gửi email OTP");
+  }
 });
 
 const TEST_EMAILS = ["test1@gmail.com", "test2@gmail.com", "admin@test.com"];

@@ -16,8 +16,8 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ limit: "10mb", extended: true }));
 
 const allowedOrigins = [
-  "http://localhost:5173", // Cho môi trường dev (Vite)
-  ENV.CLIENT_URL, // Domain Vercel của bạn (ví dụ: https://your-app.vercel.app)
+  "http://localhost:5173",
+  ENV.CLIENT_URL, // <--- Trên Dashboard Render, tạo biến CLIENT_URL điền link Vercel của bạn vào
 ];
 
 app.use(
@@ -29,12 +29,11 @@ app.use(
         callback(new Error("Not allowed by CORS"));
       }
     },
-    credentials: true, // Quan trọng để gửi/nhận cookie
+    credentials: true, // Cho phép Vercel gửi Cookie
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
   }),
 );
-
 // Bắt buộc có dòng này để xử lý Preflight Request của trình duyệt
 app.options("*", cors());
 

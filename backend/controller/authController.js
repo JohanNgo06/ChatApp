@@ -1,31 +1,8 @@
 import User from "../model/userModel.js";
 import bcrypt from "bcryptjs";
-import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import { ENV } from "../lib/env.js";
 import cloudinary from "../lib/cloudinary.js";
-import nodemailer from "nodemailer";
-
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587, // Đổi từ 465 sang 587
-  secure: false, // BẮT BUỘC ĐỔI THÀNH false khi dùng port 587 (Nodemailer sẽ tự động nâng cấp lên TLS)
-  auth: {
-    user: ENV.USER_EMAIL,
-    pass: ENV.PASS_EMAIL,
-  },
-  // Tăng thời gian chờ lên 30 giây để bù trừ cho độ trễ của Render server
-  connectionTimeout: 30000,
-  greetingTimeout: 30000,
-  socketTimeout: 40000,
-});
-transporter.verify(function (error, success) {
-  if (error) {
-    console.error("Lỗi cấu hình gửi mail:", error);
-  } else {
-    console.log("Server đã sẵn sàng gửi email OTP");
-  }
-});
 
 const TEST_EMAILS = ["test1@gmail.com", "test2@gmail.com", "admin@test.com"];
 
@@ -57,11 +34,12 @@ export const verifyOTP = async (req, res, next) => {
       expiresIn: ENV.JWT_EXPIRES_IN,
     });
 
+    // LƯU Ý QUAN TRỌNG: Sửa sameSite thành "none" và secure thành true để chạy được trên Vercel
     res.cookie("jwt", token, {
       maxAge: 7 * 24 * 60 * 60 * 1000,
       httpOnly: true,
-      sameSite: "strict",
-      secure: ENV.NODE_ENV !== "development",
+      sameSite: "none",
+      secure: true,
     });
 
     const userResponse = user.toObject();
@@ -119,7 +97,6 @@ export const signup = async (req, res, next) => {
       ? null
       : new Date(Date.now() + 5 * 60 * 1000);
 
-    // BỎ TRANSACTION ĐI, TẠO TRỰC TIẾP LUÔN
     const newUser = await User.create({
       name,
       email,
@@ -134,44 +111,56 @@ export const signup = async (req, res, next) => {
       const token = jwt.sign({ userId: newUser._id }, ENV.JWT_SECRET, {
         expiresIn: "7d",
       });
-
       return res.status(200).json({
         success: true,
         message: "Đăng ký thành công (Bypass OTP)",
-        data: {
-          userId: newUser._id,
-          token: token,
-        },
+        data: { userId: newUser._id, token: token },
         user: newUser,
         requireOtp: false,
       });
     }
 
-    const mailOptions = {
-      from: `"WhatSoup App" <${ENV.USER_EMAIL}>`,
-      to: email,
-      subject: "Mã xác nhận đăng ký tài khoản",
-      html: `
-        <div style="font-family: Arial, sans-serif; padding: 20px;">
-          <h2>Xin chào ${name},</h2>
-          <p>Cảm ơn bạn đã đăng ký tài khoản. Đây là mã xác nhận (OTP) của bạn:</p>
-          <h1 style="color: #5c40e8; letter-spacing: 5px;">${otp}</h1>
-          <p>Mã này sẽ hết hạn trong vòng 5 phút.</p>
-        </div>
-      `,
-    };
-
-    // THÊM TRY-CATCH CHO RIÊNG GỬI EMAIL
+    // GỬI EMAIL BẰNG BREVO API (KHÔNG DÙNG NODEMAILER)
     try {
-      await transporter.sendMail(mailOptions);
-    } catch (mailError) {
-      console.error("Lỗi gửi email OTP:", mailError);
-      // Nếu gửi mail lỗi, phải xóa user vừa tạo để họ còn đăng ký lại được
-      await User.findByIdAndDelete(newUser._id);
-      return res.status(500).json({
-        message:
-          "Không thể gửi email OTP. Vui lòng kiểm tra lại cấu hình Nodemailer.",
+      const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "api-key": ENV.BREVO_API_KEY,
+        },
+        body: JSON.stringify({
+          sender: {
+            name: "WhatSoup App",
+            email: ENV.USER_EMAIL, // Email bạn dùng đăng ký Brevo
+          },
+          to: [{ email: email }],
+          subject: "Mã xác nhận đăng ký tài khoản",
+          htmlContent: `
+            <div style="font-family: Arial, sans-serif; padding: 20px;">
+              <h2>Xin chào ${name},</h2>
+              <p>Cảm ơn bạn đã đăng ký tài khoản. Đây là mã xác nhận (OTP) của bạn:</p>
+              <h1 style="color: #5c40e8; letter-spacing: 5px;">${otp}</h1>
+              <p>Mã này sẽ hết hạn trong vòng 5 phút.</p>
+            </div>
+          `,
+        }),
       });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error("Lỗi từ Brevo:", errorData);
+        await User.findByIdAndDelete(newUser._id);
+        return res
+          .status(500)
+          .json({ message: "Lỗi hệ thống gửi email. Vui lòng thử lại sau." });
+      }
+    } catch (mailError) {
+      console.error("Lỗi mạng khi gọi Brevo:", mailError);
+      await User.findByIdAndDelete(newUser._id);
+      return res
+        .status(500)
+        .json({ message: "Không thể kết nối đến máy chủ gửi email." });
     }
 
     res.status(200).json({
@@ -191,33 +180,32 @@ export const signin = async (req, res, next) => {
     const { email, password } = req.body;
     const user = await User.findOne({ email });
 
-    if (!user) {
+    if (!user)
       return res.status(404).json({ message: "Tài khoản không tồn tại" });
-    }
 
-    // FIX LỖI ĐĂNG NHẬP: Chặn đứng tài khoản chưa nhập OTP
     if (!user.isVerified) {
-      return res.status(401).json({
-        message:
-          "Tài khoản chưa được xác minh. Vui lòng đăng ký lại để nhận mã OTP.",
-      });
+      return res
+        .status(401)
+        .json({
+          message:
+            "Tài khoản chưa được xác minh. Vui lòng đăng ký lại để nhận mã OTP.",
+        });
     }
 
     const comparePassword = await bcrypt.compare(password, user.password);
-
-    if (!comparePassword) {
+    if (!comparePassword)
       return res.status(401).json({ message: "Sai email hoặc mật khẩu" });
-    }
 
     const token = jwt.sign({ userId: user._id }, ENV.JWT_SECRET, {
       expiresIn: ENV.JWT_EXPIRES_IN,
     });
 
+    // LƯU Ý QUAN TRỌNG: Sửa sameSite thành "none" và secure thành true
     res.cookie("jwt", token, {
       maxAge: 7 * 24 * 60 * 60 * 1000,
       httpOnly: true,
-      sameSite: "strict",
-      secure: ENV.NODE_ENV !== "development",
+      sameSite: "none",
+      secure: true,
     });
 
     const userResponse = user.toObject();
@@ -226,10 +214,7 @@ export const signin = async (req, res, next) => {
     res.status(200).json({
       success: true,
       message: "Đăng nhập thành công",
-      data: {
-        token,
-        user: userResponse,
-      },
+      data: { token, user: userResponse },
     });
   } catch (error) {
     next(error);
@@ -240,6 +225,8 @@ export const signout = async (req, res, next) => {
   try {
     res.cookie("jwt", "", {
       httpOnly: true,
+      sameSite: "none",
+      secure: true,
       expires: new Date(0),
     });
     res.status(200).json({
@@ -253,33 +240,24 @@ export const signout = async (req, res, next) => {
 
 export const updateProfile = async (req, res, next) => {
   try {
-    // Nhận thêm name và password từ Frontend
     const { profilePic, name, password } = req.body;
     const userId = req.user._id;
-
     const updateData = {};
 
-    // 1. Nếu có cập nhật Tên
-    if (name) {
-      updateData.name = name;
-    }
+    if (name) updateData.name = name;
 
-    // 2. Nếu có cập nhật Mật khẩu
     if (password) {
-      if (password.length < 6) {
+      if (password.length < 6)
         return res.status(400).json({ message: "Mật khẩu phải từ 6 ký tự" });
-      }
       const salt = await bcrypt.genSalt(10);
       updateData.password = await bcrypt.hash(password, salt);
     }
 
-    // 3. Nếu có cập nhật Ảnh đại diện
     if (profilePic) {
       const responseUpload = await cloudinary.uploader.upload(profilePic);
       updateData.profilePic = responseUpload.secure_url;
     }
 
-    // Nếu không gửi lên gì cả
     if (Object.keys(updateData).length === 0) {
       return res
         .status(400)
@@ -288,12 +266,12 @@ export const updateProfile = async (req, res, next) => {
 
     const updatedUser = await User.findByIdAndUpdate(userId, updateData, {
       new: true,
-    }).select("-password -privateKey"); // Loại bỏ các trường nhạy cảm trước khi trả về
+    }).select("-password -privateKey");
 
     res.status(200).json({
       success: true,
       message: "Cập nhật hồ sơ thành công",
-      data: updatedUser, // Sửa lại key trả về cho gọn
+      data: updatedUser,
     });
   } catch (error) {
     next(error);
@@ -312,13 +290,9 @@ export const checkAuth = (req, res) => {
 export const searchUsers = async (req, res) => {
   try {
     const keyword = req.query.keyword;
-
-    if (!keyword) {
-      return res.status(200).json([]);
-    }
+    if (!keyword) return res.status(200).json([]);
 
     const currentUserId = req.user._id;
-
     const users = await User.find({
       _id: { $ne: currentUserId },
       $or: [

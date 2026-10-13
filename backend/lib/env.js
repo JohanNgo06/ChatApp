@@ -16,4 +16,5 @@ export const ENV = {
   ARCJET_ENV: process.env.ARCJET_ENV,
   USER_EMAIL: process.env.USER_EMAIL,
   PASS_EMAIL: process.env.PASS_EMAIL,
+  BREVO_API_KEY: process.env.BREVO_API_KEY,
 };

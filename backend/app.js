@@ -33,7 +33,7 @@ app.use(
 );
 
 // Bắt buộc phải có dòng này để xử lý Preflight Request (OPTIONS) của trình duyệt
-app.options("*", cors());
+app.options("/(.*)", cors());
 
 app.use("/api/auth", authRoute);
 app.use("/api/messages", messageRoute);

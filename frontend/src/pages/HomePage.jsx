@@ -331,7 +331,33 @@ const HomePage = () => {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {/* Render danh sách requests giữ nguyên code của bạn... */}
+                    {/* BẮT ĐẦU ĐOẠN CẦN THÊM LẠI */}
+                    {requests.map((r) => (
+                      <div key={r._id} className="border border-gray-100 rounded-2xl p-4 shadow-sm hover:shadow-md transition-shadow bg-white">
+                        <div className="flex items-center gap-3 mb-4">
+                          <Avatar user={r.sender} size="w-12 h-12" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-gray-900 truncate">{r.sender.name}</p>
+                            <p className="text-xs text-gray-500 truncate">{r.sender.email}</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => acceptRequest(r._id)}
+                            className="flex-1 bg-[#5c40e8] hover:bg-[#4a32c3] text-white text-sm font-semibold py-2.5 rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+                          >
+                            <Check className="w-4 h-4" /> Chấp nhận
+                          </button>
+                          <button
+                            onClick={() => rejectRequest(r._id)}
+                            className="bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-semibold px-5 rounded-xl transition-colors"
+                          >
+                            Từ chối
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {/* KẾT THÚC ĐOẠN CẦN THÊM LẠI */}
                   </div>
                 )}
               </div>
